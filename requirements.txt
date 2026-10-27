@@ -1,0 +1,2 @@
+# Suri implementation. Runtime deps are stdlib + ffmpeg for now.
+# The Meta API client (openai package) arrives with sam.py / agent.py.
