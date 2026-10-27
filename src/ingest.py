@@ -32,6 +32,7 @@ CHUNKS_COLUMNS = (
     "roi_w",
     "roi_h",
     "sha256",
+    "src_sha256",
 )
 
 
@@ -41,6 +42,8 @@ def runs_dir() -> str:
 
 def plan_chunks(durations, chunk_s=300.0, overlap_s=1.0):
     """Plan (src_idx, start_s, dur_s, t0_s) per chunk. No chunk spans files."""
+    if not 0 <= overlap_s < chunk_s < float("inf"):
+        raise ValueError(f"need 0 <= overlap_s < chunk_s, got chunk_s={chunk_s}, overlap_s={overlap_s}")
     out, offset = [], 0.0
     for i, total in enumerate(durations):
         start = 0.0
@@ -179,6 +182,9 @@ def ingest(crossing, session, roi, raw_files, chunk_s=300.0, overlap_s=1.0, half
             for row in csv.DictReader(fh):
                 recorded[row["chunk_id"]] = row
     durations = [probe_duration(p) for p in raw_files]
+    # One streaming pass per raw file: the fingerprint proves the reuse
+    # candidate below is the same footage, not a same-named replacement.
+    src_digests = {p: sha256_file(p) for p in raw_files}
     plan = plan_chunks(durations, chunk_s, overlap_s)
     verify_coverage(plan, durations, chunk_s, overlap_s)
     rows = []
@@ -199,6 +205,7 @@ def ingest(crossing, session, roi, raw_files, chunk_s=300.0, overlap_s=1.0, half
             "roi_y": y,
             "roi_w": w,
             "roi_h": h,
+            "src_sha256": src_digests[raw_files[src_idx]],
         }
         # Reuse only when every planned field matches and the file is intact:
         # a re-ingest with another ROI, --half or --chunk-s must re-encode.
@@ -230,10 +237,23 @@ def _check() -> None:
     tmp = tempfile.mkdtemp(prefix="suri-ingest-check-")
     os.environ["SURI_RUNS_DIR"] = os.path.join(tmp, "runs")
     try:
+        for bad in (
+            {"chunk_s": 1.0, "overlap_s": 1.0},
+            {"chunk_s": 1.0, "overlap_s": 2.0},
+            {"chunk_s": 0.0},
+            {"chunk_s": float("inf")},
+            {"overlap_s": -1.0},
+        ):
+            try:
+                plan_chunks([65.0], **bad)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"plan_chunks accepted {bad}")
         raw = os.path.join(tmp, "raw.mp4")
         _run(
             [
-                "ffmpeg", "-nostdin", "-v", "error",
+                "ffmpeg", "-nostdin", "-y", "-v", "error",
                 "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=65",
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=65",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
@@ -272,7 +292,7 @@ def _check() -> None:
         long_audio = os.path.join(tmp, "raw-long-audio.mp4")
         _run(
             [
-                "ffmpeg", "-nostdin", "-v", "error",
+                "ffmpeg", "-nostdin", "-y", "-v", "error",
                 "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=65",
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=66",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
@@ -283,6 +303,20 @@ def _check() -> None:
         total_frames = sum(int(r["duration_s"] * 10) for r in rows5)
         assert total_frames == 670, rows5
         assert rows5[-1]["duration_s"] == 7.0, rows5[-1]
+
+        # Same name and duration but different footage must re-encode.
+        _run(
+            [
+                "ffmpeg", "-nostdin", "-y", "-v", "error",
+                "-f", "lavfi", "-i", "smptebars=size=320x240:rate=30:duration=65",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=65",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-shortest", raw,
+            ]
+        )
+        rows6 = ingest("x", "s1", (0, 0, 160, 120), [raw], chunk_s=20.0)
+        assert [r["src_sha256"] for r in rows6] == [sha256_file(raw)] * 4, rows6
+        assert rows6[0]["sha256"] != rows4[0]["sha256"], "replaced footage reused"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("ingest --check: PASS (chunks, idempotent, re-ingest, long audio)")

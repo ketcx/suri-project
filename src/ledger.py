@@ -281,9 +281,6 @@ def call(task_id, model, endpoint, key_body, send, estimate_usd=0.0, cache_reads
         return
     if os.environ.get("SURI_OFFLINE") == "1":
         raise CacheMiss(f"offline and not cached: {request_h}")
-    cap = _cap_for(model)
-    if spent_usd(model) + estimate_usd > cap:
-        raise CapExceeded(f"{model}: spent {spent_usd(model):.4f} + est {estimate_usd:.4f} > cap {cap}")
     def log_estimate() -> None:
         _append_row(
             {
@@ -300,10 +297,15 @@ def call(task_id, model, endpoint, key_body, send, estimate_usd=0.0, cache_reads
             }
         )
 
-    # One retry: every broken attempt gets its own row at the estimate.
+    # One retry: every broken attempt gets its own row at the estimate,
+    # and the cap is rechecked before every send, since the failed
+    # attempt's estimate already counts toward it.
+    cap = _cap_for(model)
     broken = 0
     events: list = []
     while True:
+        if spent_usd(model) + estimate_usd > cap:
+            raise CapExceeded(f"{model}: spent {spent_usd(model):.4f} + est {estimate_usd:.4f} > cap {cap}")
         try:
             events = list(send())
         except Exception:  # noqa: BLE001 - logged, retried once, then propagated
@@ -325,7 +327,8 @@ def call(task_id, model, endpoint, key_body, send, estimate_usd=0.0, cache_reads
     except ValueError:
         log_estimate()
         raise
-    _write_entry(path, request, events)
+    # The call already happened and was billed, so the spend row goes
+    # first: a cache I/O failure must not erase it from the ledger.
     _append_row(
         {
             "ts": _now_iso(),
@@ -340,6 +343,7 @@ def call(task_id, model, endpoint, key_body, send, estimate_usd=0.0, cache_reads
             "cache_hit": 0,
         }
     )
+    _write_entry(path, request, events)
     yield from events
 
 
@@ -534,6 +538,46 @@ def _check() -> None:
             assert list(csv.DictReader(fh))[-1]["cache_hit"] == "0"
         got = list(call("T-202", "muse-spark-1.3", "baseten/chat/completions", {"fresh": True}, send_fresh))
         assert got == fresh and len(fresh_calls) == 1, "second call must hit the cache"
+
+        # A retry that no longer fits the cap raises before the second send.
+        old_cap = CAPS["sam-3.1"]
+        CAPS["sam-3.1"] = spent_usd("sam-3.1") + 0.09
+        flaky_calls = []
+
+        def send_flaky():
+            flaky_calls.append(1)
+            if len(flaky_calls) == 1:
+                return iter(truncated)
+            return iter(events)
+
+        try:
+            try:
+                list(call("T-103", "sam-3.1", "meta/responses", {"flaky": True}, send_flaky, estimate_usd=0.06))
+            except CapExceeded:
+                pass
+            else:
+                raise AssertionError("CapExceeded not raised before retry")
+        finally:
+            CAPS["sam-3.1"] = old_cap
+        assert len(flaky_calls) == 1, flaky_calls
+
+        # A cache-write failure still leaves the billed charge in the ledger.
+        blocker = os.path.join(tmp, "file-as-dir")
+        with open(blocker, "w") as fh:
+            fh.write("x")
+        os.environ["SURI_CACHE_DIR"] = blocker
+        try:
+            try:
+                list(call("T-103", "sam-3.1", "meta/responses", {"uncacheable": True}, lambda: iter(events), estimate_usd=0.06))
+            except OSError:
+                pass
+            else:
+                raise AssertionError("cache failure not raised")
+        finally:
+            os.environ["SURI_CACHE_DIR"] = os.path.join(tmp, "api")
+        with open(os.environ["SURI_LEDGER"], newline="") as fh:
+            row = list(csv.DictReader(fh))[-1]
+        assert row["cache_hit"] == "0" and float(row["cost_usd"]) == 0.06, row
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("ledger --check: PASS (replay, cap, contributor, truncation, usage)")
