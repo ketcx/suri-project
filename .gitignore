@@ -1,0 +1,46 @@
+# Local / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Raw field material — never commit, deleted Nov 30 2026 (spec 09)
+raw/
+*.MOV
+*.mov
+*.MP4
+
+# Video outputs: only blurred evidence clips are published
+*.mp4
+!docs/clips/*.mp4
+!runs/*/clips/E-*.mp4
+
+# Masks and caches — local only, reproducible from tracks + code
+*.npz
+!fixtures/**/*.npz
+runs/*/cache/
+runs/*/*/masks/
+data/external/
+
+# Planning-repo private dirs (kept here in case they are copied over)
+info/
+notes/
+
+# Reports / local runs
+*.log
