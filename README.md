@@ -14,11 +14,11 @@ Cities usually act on a dangerous crossing only after people are hurt. Nuevo Le�
 
 ## How it works
 
-1. **Capture.** Fixed, elevated video of one crossing in Distrito Tec, Monterrey (`mty-garciaroel-ahuehuetes`), plus a measured ground network and signal timing (spec 01).
-2. **Track.** Meta **SAM 3.1** segments and tracks every `person` and `car` (spec 02).
-3. **Measure.** Tracks are projected onto the street plane; the code computes **post-encroachment time (PET)** per conflict area, pedestrian crossing speeds, and who is still in the crosswalk when the signal turns red (specs 03–04).
-4. **Verify.** A **Muse Wonder** agent checks every candidate with tools — kinematics, re-segmentation with concepts it writes itself, and an explanation from **Muse Spark Open** — and rejects false alarms with reason codes (spec 06).
-5. **Recommend.** The agent proposes a **leading pedestrian interval (LPI 3/5/7 s)** and replays it on the measured tracks as a labeled mechanical scenario, not a prediction (spec 05).
+1. **Capture.** Fixed, elevated video of one crossing in Distrito Tec, Monterrey (`mty-garciaroel-ahuehuetes`), plus a measured ground network and signal timing.
+2. **Track.** Meta **SAM 3.1** segments and tracks every `person` and `car`.
+3. **Measure.** Tracks are projected onto the street plane; the code computes **post-encroachment time (PET)** per conflict area, pedestrian crossing speeds, and who is still in the crosswalk when the signal turns red.
+4. **Verify.** A **Muse Wonder** agent checks every candidate with tools — kinematics, re-segmentation with concepts it writes itself, and an explanation from **Muse Spark Open** — and rejects false alarms with reason codes.
+5. **Recommend.** The agent proposes a **leading pedestrian interval (LPI 3/5/7 s)** and replays it on the measured tracks as a labeled mechanical scenario, not a prediction.
 6. **Report.** Output is a Spanish *"Inspección de seguridad vial asistida por video"* where every finding links to its clip, metric and check. **The code computes, the AI explains, the engineer decides.**
 
 ## Meta models
@@ -36,22 +36,22 @@ API access uses the OpenAI-compatible SDK with `base_url=https://api.meta.ai/v1`
 
 ## Repo map (planned)
 
-| Path | What | Spec |
-| --- | --- | --- |
-| `src/ingest.py` | Re-encode to 10 fps, ROI crop, chunk split → `chunks.csv` | 02 |
-| `src/sam.py`, `src/ledger.py` | SAM 3.1 client, stream parser, cache + cost ledger | 02 |
-| `src/calib.py` | Pixel-to-meter homography (RANSAC), `calib.json`, `zones.json`, `zones.png` | 03 |
-| `src/kinematics.py` | Trajectories, speeds, `crossings.csv`, `events.json` (PET) | 04 |
-| `src/counterfactual.py` | LPI 3/5/7 s mechanical scenario → `counterfactual.json` | 05 |
-| `src/agent.py` | Wonder agent, 4 tools, placeholders-only prose, `trace.jsonl`, `findings.json` | 06 |
-| `src/metrics.py` | H1–H6, Wilson/Poisson intervals, `metrics.json` | 07 |
-| `src/clips.py` | Blurred 720p evidence clips + keyframes, `--audit` | 09 |
-| `src/report.py` | HTML + PDF inspection report (ES + EN summary) | 08 |
-| `app.py`, `docs/` | Local live run + static GitHub Pages site | 08 |
-| `fixtures/<module>/` | One runnable check per module | 02–07 |
-| `runs/` | `ledger.csv`, `<crossing_id>/<session_id>/` outputs (see PRD §7) | PRD |
+| Path | What |
+| --- | --- |
+| `src/ingest.py` | Re-encode to 10 fps, ROI crop, chunk split → `chunks.csv` |
+| `src/sam.py`, `src/ledger.py` | SAM 3.1 client, stream parser, cache + cost ledger |
+| `src/calib.py` | Pixel-to-meter homography (RANSAC), `calib.json`, `zones.json`, `zones.png` |
+| `src/kinematics.py` | Trajectories, speeds, `crossings.csv`, `events.json` (PET) |
+| `src/counterfactual.py` | LPI 3/5/7 s mechanical scenario → `counterfactual.json` |
+| `src/agent.py` | Wonder agent, 4 tools, placeholders-only prose, `trace.jsonl`, `findings.json` |
+| `src/metrics.py` | Precision, recall and cost metrics → `metrics.json` |
+| `src/clips.py` | Blurred 720p evidence clips + keyframes, `--audit` |
+| `src/report.py` | HTML + PDF inspection report (ES + EN summary) |
+| `app.py`, `docs/` | Local live run + static GitHub Pages site |
+| `fixtures/<module>/` | One runnable check per module |
+| `runs/` | `ledger.csv`, `<crossing_id>/<session_id>/` outputs |
 
-Full contracts (IDs, CSV columns, JSON schemas) are in the planning repo: `docs/PRD.md` §7 and `docs/specs/`.
+Key contracts are summarized in [AGENTS.md](AGENTS.md); each module's check enforces its own.
 
 ## Quickstart (planned)
 
@@ -62,7 +62,7 @@ cp .env.example .env  # MODEL_API_KEY, BASETEN_API_KEY — never commit
 python -m src.ingest --help
 ```
 
-All checks run with one command (see PRD §5, reproducibility). Every API response is cached by request hash; spend goes through `runs/ledger.csv`.
+All checks run with one command. Every API response is cached by request hash; spend goes through `runs/ledger.csv`.
 
 ## Privacy
 
