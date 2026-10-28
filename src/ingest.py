@@ -95,7 +95,13 @@ def probe_duration(path: str) -> float:
 
 
 def probe_size(path: str) -> tuple[int, int]:
-    """Source frame size (width, height) of the first video stream."""
+    """Coded frame size (width, height) of the first video stream.
+
+    This is the unrotated size: files carrying display-rotation metadata
+    still report coded dimensions here. Encoding passes ``-noautorotate``
+    so the crop filter sees these same coded pixels, keeping validation
+    and encoding in one orientation.
+    """
     out = _run(
         [
             "ffprobe", "-v", "error",
@@ -113,7 +119,9 @@ def check_roi(roi, src_w: int, src_h: int, src: str) -> None:
 
     FFmpeg clamps out-of-range crop offsets instead of failing, so an
     ROI outside the frame would silently recycle shifted footage while
-    chunks.csv records the requested coordinates.
+    chunks.csv records the requested coordinates. Encoding disables
+    autorotation, so the frame checked here is the frame that gets
+    cropped even when the source carries display-rotation metadata.
     """
     x, y, w, h = roi
     if x + w > src_w or y + h > src_h:
@@ -185,10 +193,14 @@ def encode_chunk(src: str, start: float, dur: float, roi, half: bool, out_path: 
         vf += ",scale=iw/2:ih/2"
         width, height = w // 2, h // 2
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    # -noautorotate is an input option: without it ffmpeg rotates decoded
+    # frames per display metadata while probe_size/check_roi validate the
+    # unrotated coded size, so a passing ROI could miss the rotated frame
+    # (silent clamped offsets) or fail the crop outright.
     _run(
         [
             "ffmpeg", "-nostdin", "-y", "-v", "error",
-            "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", src,
+            "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-noautorotate", "-i", src,
             "-vf", vf, "-frames:v", str(n_frames),
             "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", out_path,
@@ -264,9 +276,49 @@ def ingest(crossing, session, roi, raw_files, chunk_s=300.0, overlap_s=1.0, half
     return rows
 
 
+def _stamp_rot90(src_path: str, dst_path: str) -> None:
+    """Copy an mp4 stamping a 90° CW display matrix (tkhd), pixels untouched.
+
+    Self-check fixture only: ffprobe still reports the coded size while a
+    default ffmpeg decode autorotates, so this file fails ingest unless
+    encoding disables autorotation.
+    """
+    import struct
+
+    with open(src_path, "rb") as fh:
+        buf = bytearray(fh.read())
+
+    def children(start: int, end: int):
+        off = start
+        while off + 8 <= end:
+            size = struct.unpack(">I", buf[off:off + 4])[0]
+            hdr = 8
+            if size == 1:
+                size = struct.unpack(">Q", buf[off + 8:off + 16])[0]
+                hdr = 16
+            yield buf[off + 4:off + 8], off + hdr, off + size
+            off += size
+
+    for typ, ps, pe in children(0, len(buf)):
+        if typ != b"moov":
+            continue
+        for typ2, ps2, pe2 in children(ps, pe):
+            if typ2 != b"trak":
+                continue
+            for typ3, ps3, _ in children(ps2, pe2):
+                if typ3 == b"tkhd" and buf[ps3] == 0:
+                    buf[ps3 + 40:ps3 + 76] = struct.pack(
+                        ">9l", 0, 0x10000, 0, -0x10000, 0, 0, 0, 0, 0x40000000)
+                    with open(dst_path, "wb") as fh:
+                        fh.write(bytes(buf))
+                    return
+    raise AssertionError("tkhd box not found")
+
+
 def _check() -> None:
     """Ingest self-check: 65 s testsrc2, re-runs, param changes, long audio,
-    ROI bounds, source-relative reuse key, legacy manifest upgrade."""
+    ROI bounds, source-relative reuse key, legacy manifest upgrade,
+    display-rotation alignment."""
     import shutil
     import tempfile
 
@@ -417,6 +469,29 @@ def _check() -> None:
         for r in upgraded:
             path = os.path.join(tmp, "runs", "x", "cache", "chunks", r["chunk_id"] + ".mp4")
             assert os.path.getmtime(path) != legacy_stamp[r["chunk_id"]], f"legacy row reused for {r['chunk_id']}"
+
+        # Display rotation must not desync ROI validation from encoding.
+        # ffprobe reports the coded size while a default ffmpeg decode
+        # autorotates, so a full-coded-frame ROI on a 90° file errors
+        # pre-fix (crop wider than the rotated frame) and ingests
+        # cleanly once encoding disables autorotation.
+        rot_base = os.path.join(tmp, "rot-base.mp4")
+        _run(
+            [
+                "ffmpeg", "-nostdin", "-y", "-v", "error",
+                "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=5",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", rot_base,
+            ]
+        )
+        rot_src = os.path.join(tmp, "rot90.mp4")
+        _stamp_rot90(rot_base, rot_src)
+        assert probe_size(rot_src) == (320, 240), probe_size(rot_src)
+        rot_rows = ingest("x", "s4", (0, 0, 320, 240), [rot_src], chunk_s=10.0)
+        assert len(rot_rows) == 1, rot_rows
+        rot_info = probe_chunk(os.path.join(tmp, "runs", "x", "cache", "chunks", "s4-c00.mp4"))
+        assert (rot_info["width"], rot_info["height"]) == (320, 240), rot_info
+        assert rot_rows[0]["sha256"] == sha256_file(
+            os.path.join(tmp, "runs", "x", "cache", "chunks", "s4-c00.mp4"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("ingest --check: PASS (chunks, idempotent, re-ingest, long audio)")
