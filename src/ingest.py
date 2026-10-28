@@ -133,12 +133,48 @@ def probe_chunk(path: str) -> dict:
         [
             "ffprobe", "-v", "error", "-count_frames",
             "-show_entries", "stream=codec_name,r_frame_rate,width,height,nb_read_frames",
+            "-show_entries", "stream_side_data=rotation:stream_tags=rotate,rotation",
             "-show_entries", "format=nb_streams",
             "-of", "json", path,
         ]
     )
     doc = json.loads(out)
     return {"streams": doc["format"]["nb_streams"], **doc["streams"][0]}
+
+
+def stream_rotation(stream: dict) -> float:
+    """Net display rotation (degrees) from a probed stream dict, 0.0 if none.
+
+    Reads both the container display matrix (side data) and legacy
+    rotate/rotation tags (any case), so a chunk is rejected when any
+    autorotating consumer would see geometry different from the coded
+    size recorded in chunks.csv. Angles within half a degree of a full
+    turn count as unrotated.
+    """
+    angles = []
+    for entry in stream.get("side_data_list") or []:
+        if "rotation" in entry:
+            angles.append(float(entry["rotation"]))
+    for key, val in (stream.get("tags") or {}).items():
+        if key.lower() in ("rotate", "rotation"):
+            angles.append(float(val))
+    for angle in angles:
+        if abs((angle + 180.0) % 360.0 - 180.0) > 0.5:
+            return angle
+    return 0.0
+
+
+def probe_rotation(path: str) -> float:
+    """Net display rotation (degrees) of the first video stream."""
+    out = _run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream_side_data=rotation:stream_tags=rotate,rotation",
+            "-of", "json", path,
+        ]
+    )
+    return stream_rotation((json.loads(out).get("streams") or [{}])[0])
 
 
 def sha256_file(path: str) -> str:
@@ -162,6 +198,12 @@ def verify_chunk(path: str, width: int, height: int, n_frames: int) -> None:
         raise ValueError(f"{path}: expected {width}x{height}, got {info['width']}x{info['height']}")
     if int(info["nb_read_frames"]) != n_frames:
         raise ValueError(f"{path}: expected {n_frames} frames, got {info['nb_read_frames']}")
+    rotation = stream_rotation(info)
+    if rotation != 0.0:
+        raise ValueError(
+            f"{path}: expected no display rotation, got {rotation}; "
+            "an autorotating consumer would see different geometry than chunks.csv records"
+        )
 
 
 def verify_coverage(plan, durations, chunk_s=300.0, overlap_s=1.0, tol=0.1) -> None:
@@ -193,14 +235,16 @@ def encode_chunk(src: str, start: float, dur: float, roi, half: bool, out_path: 
         vf += ",scale=iw/2:ih/2"
         width, height = w // 2, h // 2
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    # -noautorotate is an input option: without it ffmpeg rotates decoded
-    # frames per display metadata while probe_size/check_roi validate the
-    # unrotated coded size, so a passing ROI could miss the rotated frame
-    # (silent clamped offsets) or fail the crop outright.
+    # Both are input options: -noautorotate keeps decoded pixels in coded
+    # orientation (the space probe_size/check_roi validate), while
+    # -display_rotation 0 overrides the source display matrix so the muxer
+    # writes no rotation side data — otherwise an autorotating consumer
+    # would see different chunk geometry than chunks.csv records.
     _run(
         [
             "ffmpeg", "-nostdin", "-y", "-v", "error",
-            "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-noautorotate", "-i", src,
+            "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
+            "-display_rotation", "0", "-noautorotate", "-i", src,
             "-vf", vf, "-frames:v", str(n_frames),
             "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", out_path,
@@ -486,12 +530,17 @@ def _check() -> None:
         rot_src = os.path.join(tmp, "rot90.mp4")
         _stamp_rot90(rot_base, rot_src)
         assert probe_size(rot_src) == (320, 240), probe_size(rot_src)
+        # The fixture must actually carry rotation, or the test is vacuous.
+        assert probe_rotation(rot_src) != 0.0, probe_rotation(rot_src)
         rot_rows = ingest("x", "s4", (0, 0, 320, 240), [rot_src], chunk_s=10.0)
         assert len(rot_rows) == 1, rot_rows
-        rot_info = probe_chunk(os.path.join(tmp, "runs", "x", "cache", "chunks", "s4-c00.mp4"))
+        rot_chunk = os.path.join(tmp, "runs", "x", "cache", "chunks", "s4-c00.mp4")
+        rot_info = probe_chunk(rot_chunk)
         assert (rot_info["width"], rot_info["height"]) == (320, 240), rot_info
-        assert rot_rows[0]["sha256"] == sha256_file(
-            os.path.join(tmp, "runs", "x", "cache", "chunks", "s4-c00.mp4"))
+        # The chunk itself must carry no display rotation: an autorotating
+        # consumer must see the coded geometry chunks.csv records.
+        assert probe_rotation(rot_chunk) == 0.0, probe_rotation(rot_chunk)
+        assert rot_rows[0]["sha256"] == sha256_file(rot_chunk)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("ingest --check: PASS (chunks, idempotent, re-ingest, long audio)")
