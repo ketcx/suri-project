@@ -9,6 +9,8 @@ Conventions kept here on purpose:
   ``{"endpoint": ..., "body": key_body}``. Media enters the body only as a
   media key (chunk sha256, or ``<sha>:<f0>-<f1>:<variant>`` for a window),
   so a re-upload or a re-cut still hits the cache.
+- ``call`` injects its ``model`` argument into the key body before
+  hashing, so the same endpoint and body under another model is a miss.
 - A cache entry is ``{"request": ...}`` on line 1, then one JSON object per
   event in received order. It is written to ``.tmp`` and renamed only after
   the stream completes, so a broken stream never becomes an entry.
@@ -25,6 +27,7 @@ import csv
 import gzip
 import hashlib
 import json
+import math
 import os
 import sys
 import tempfile
@@ -255,9 +258,19 @@ def call(task_id, model, endpoint, key_body, send, estimate_usd=0.0, cache_reads
     Yields event dicts in stored order on a hit, so downstream parsing is
     byte-identical. ``send`` is called at most twice: a stream that breaks
     after sending gets a row at the estimate and 1 retry.
+
+    The ``model`` argument is part of the cache identity: it is injected
+    into the key body before hashing, so switching models never replays
+    another model's response. An uncached send requires a positive,
+    finite ``estimate_usd`` so failed attempts always leave spend behind.
     """
     if model.endswith("-contributor"):
         raise ValueError("Contributor mode is never used")
+    if not isinstance(key_body, dict):
+        raise ValueError(f"key_body must be a dict, got {type(key_body).__name__}")
+    if "model" in key_body and key_body["model"] != model:
+        raise ValueError(f"key_body model {key_body['model']!r} does not match {model!r}")
+    key_body = {**key_body, "model": model}
     request_h = request_hash(endpoint, key_body)
     request = {"endpoint": endpoint, "body": key_body}
     path = _entry_path(request_h)
@@ -281,6 +294,12 @@ def call(task_id, model, endpoint, key_body, send, estimate_usd=0.0, cache_reads
         return
     if os.environ.get("SURI_OFFLINE") == "1":
         raise CacheMiss(f"offline and not cached: {request_h}")
+    try:
+        estimate = float(estimate_usd)
+    except (TypeError, ValueError):
+        raise ValueError(f"{model}: estimate_usd must be a positive USD amount, got {estimate_usd!r}") from None
+    if not math.isfinite(estimate) or estimate <= 0:
+        raise ValueError(f"{model}: estimate_usd must be a positive, finite USD amount, got {estimate_usd!r}")
     def log_estimate() -> None:
         _append_row(
             {
@@ -304,8 +323,9 @@ def call(task_id, model, endpoint, key_body, send, estimate_usd=0.0, cache_reads
     broken = 0
     events: list = []
     while True:
-        if spent_usd(model) + estimate_usd > cap:
-            raise CapExceeded(f"{model}: spent {spent_usd(model):.4f} + est {estimate_usd:.4f} > cap {cap}")
+        spent = spent_usd(model)
+        if spent >= cap or spent + estimate_usd > cap:
+            raise CapExceeded(f"{model}: spent {spent:.4f} + est {estimate_usd:.4f} >= cap {cap}; budget exhausted")
         try:
             events = list(send())
         except Exception:  # noqa: BLE001 - logged, retried once, then propagated
@@ -351,7 +371,8 @@ def _check() -> None:
     """Replay is identical, caps stop calls, no Contributor.
 
     Covers the cache, the cap, truncated streams with retry, nested
-    usage pricing, and the LLM-without-usage error.
+    usage pricing, the LLM-without-usage error, per-model cache
+    identity, the spent-at-cap block, and the estimate requirement.
     """
     import shutil
 
@@ -423,7 +444,7 @@ def _check() -> None:
             pass
         else:
             raise AssertionError("TruncatedStream not raised")
-        assert not os.path.exists(os.path.join(os.environ["SURI_CACHE_DIR"], request_hash("meta/responses", {"retry": "twice"}) + ".jsonl.gz"))
+        assert not os.path.exists(os.path.join(os.environ["SURI_CACHE_DIR"], request_hash("meta/responses", {"retry": "twice", "model": "sam-3.1"}) + ".jsonl.gz"))
 
         # Nested usage (Responses API shape) prices an LLM call correctly.
         nested = [
@@ -438,7 +459,7 @@ def _check() -> None:
         # An LLM call without usage fails instead of recording 0.
         nousage = [{"type": "completed"}]
         try:
-            list(call("T-203", "muse-wonder-1.0", "meta/responses", {"empty": True}, lambda: iter(nousage)))
+            list(call("T-203", "muse-wonder-1.0", "meta/responses", {"empty": True}, lambda: iter(nousage), estimate_usd=0.01))
         except ValueError:
             pass
         else:
@@ -488,12 +509,12 @@ def _check() -> None:
             pass
         else:
             raise AssertionError("incomplete response not rejected")
-        assert not os.path.exists(os.path.join(os.environ["SURI_CACHE_DIR"], request_hash("meta/responses", {"lone": True}) + ".jsonl.gz"))
+        assert not os.path.exists(os.path.join(os.environ["SURI_CACHE_DIR"], request_hash("meta/responses", {"lone": True, "model": "muse-wonder-1.0"}) + ".jsonl.gz"))
 
         # Unknown token field names fail instead of pricing at 0.
         weird = [{"type": "completed", "response": {"usage": {"input_token_count": 200000, "output_token_count": 50000}}}]
         try:
-            list(call("T-203", "muse-wonder-1.0", "meta/responses", {"weird": True}, lambda: iter(weird)))
+            list(call("T-203", "muse-wonder-1.0", "meta/responses", {"weird": True}, lambda: iter(weird), estimate_usd=0.01))
         except ValueError:
             pass
         else:
@@ -506,10 +527,93 @@ def _check() -> None:
                 "usage": {"input_tokens": 1000, "input_tokens_details": {"cached_tokens": 200}, "output_tokens": 100},
             }
         ]
-        list(call("T-202", "muse-wonder-1.0", "meta/responses", {"detail": True}, lambda: iter(detail)))
+        list(call("T-202", "muse-wonder-1.0", "meta/responses", {"detail": True}, lambda: iter(detail), estimate_usd=0.01))
         with open(os.environ["SURI_LEDGER"], newline="") as fh:
             cost = float(list(csv.DictReader(fh))[-1]["cost_usd"])
         assert abs(cost - 0.00524) < 1e-12, cost
+
+        # A key body naming another model is refused instead of cached.
+        try:
+            list(call("T-202", "muse-spark-1.3", "baseten/chat/completions", {"model": "sam-3.1"}, boom, estimate_usd=0.01))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("model mismatch not rejected")
+
+        # The model is part of the cache identity: the same endpoint
+        # and body under another model is a miss, not a replay.
+        spark_events = [
+            {"type": "delta", "text": "spark answer"},
+            {"type": "completed", "usage": {"input_tokens": 100, "output_tokens": 10}},
+        ]
+        wonder_events = [
+            {"type": "delta", "text": "wonder answer"},
+            {"type": "completed", "usage": {"input_tokens": 100, "output_tokens": 10}},
+        ]
+        spark_sends, wonder_sends = [], []
+
+        def send_spark():
+            spark_sends.append(1)
+            return iter(spark_events)
+
+        def send_wonder():
+            wonder_sends.append(1)
+            return iter(wonder_events)
+
+        got = list(call("T-202", "muse-spark-1.3", "meta/responses", {"iso": True}, send_spark, estimate_usd=0.01))
+        assert got == spark_events, "spark send must yield its own events"
+        got = list(call("T-203", "muse-wonder-1.0", "meta/responses", {"iso": True}, send_wonder, estimate_usd=0.01))
+        assert got == wonder_events, "wonder must not replay the spark response"
+        assert spark_sends == [1] and wonder_sends == [1], (spark_sends, wonder_sends)
+        spark_h = request_hash("meta/responses", {"iso": True, "model": "muse-spark-1.3"})
+        wonder_h = request_hash("meta/responses", {"iso": True, "model": "muse-wonder-1.0"})
+        assert spark_h != wonder_h, "cache identities must differ across models"
+        assert os.path.exists(os.path.join(os.environ["SURI_CACHE_DIR"], spark_h + ".jsonl.gz"))
+        assert os.path.exists(os.path.join(os.environ["SURI_CACHE_DIR"], wonder_h + ".jsonl.gz"))
+
+        # Spending exactly at the cap blocks a live call, not just
+        # estimates that overshoot it; the send never runs.
+        at_cap_sends = []
+
+        def send_at_cap():
+            at_cap_sends.append(1)
+            return iter(events)
+
+        old_spark_cap = CAPS["muse-spark-1.3"]
+        CAPS["muse-spark-1.3"] = spent_usd("muse-spark-1.3")
+        try:
+            try:
+                list(call("T-202", "muse-spark-1.3", "baseten/chat/completions", {"at-cap": True}, send_at_cap, estimate_usd=0.01))
+            except CapExceeded:
+                pass
+            else:
+                raise AssertionError("CapExceeded not raised when spent == cap")
+        finally:
+            CAPS["muse-spark-1.3"] = old_spark_cap
+        assert at_cap_sends == [], "send ran after the budget was exhausted"
+
+        # An uncached send needs a positive, finite estimate, so a
+        # failed attempt always leaves spend behind; send never runs.
+        for bad_est in (0.0, -0.01, float("nan"), float("inf"), None):
+            bad_sends = []
+
+            def send_bad():
+                bad_sends.append(1)
+                return iter(events)
+
+            try:
+                list(call("T-103", "sam-3.1", "meta/responses", {"bad-est": True}, send_bad, estimate_usd=bad_est))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"bad estimate accepted: {bad_est!r}")
+            assert bad_sends == [], f"send ran with estimate {bad_est!r}"
+        try:
+            list(call("T-103", "sam-3.1", "meta/responses", {"no-est": True}, lambda: iter(events)))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("omitted estimate accepted")
 
         # SURI_OFFLINE=1 raises CacheMiss on a miss without sending.
         os.environ["SURI_OFFLINE"] = "1"
@@ -522,7 +626,7 @@ def _check() -> None:
                 raise AssertionError("CacheMiss not raised")
         finally:
             del os.environ["SURI_OFFLINE"]
-        assert not os.path.exists(os.path.join(os.environ["SURI_CACHE_DIR"], request_hash("meta/responses", {"offline": True}) + ".jsonl.gz"))
+        assert not os.path.exists(os.path.join(os.environ["SURI_CACHE_DIR"], request_hash("meta/responses", {"offline": True, "model": "sam-3.1"}) + ".jsonl.gz"))
 
         # cache_reads=False skips the lookup but still writes the entry.
         fresh = [{"object": "chat.completion", "choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}]

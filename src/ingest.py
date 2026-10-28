@@ -22,6 +22,7 @@ CHUNKS_COLUMNS = (
     "chunk_id",
     "session_id",
     "src_file",
+    "src_start_s",
     "t0_s",
     "duration_s",
     "fps",
@@ -93,6 +94,32 @@ def probe_duration(path: str) -> float:
     return float(doc["format"]["duration"])
 
 
+def probe_size(path: str) -> tuple[int, int]:
+    """Source frame size (width, height) of the first video stream."""
+    out = _run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "json", path,
+        ]
+    )
+    stream = (json.loads(out).get("streams") or [{}])[0]
+    return int(stream["width"]), int(stream["height"])
+
+
+def check_roi(roi, src_w: int, src_h: int, src: str) -> None:
+    """Reject a crop the source cannot contain.
+
+    FFmpeg clamps out-of-range crop offsets instead of failing, so an
+    ROI outside the frame would silently recycle shifted footage while
+    chunks.csv records the requested coordinates.
+    """
+    x, y, w, h = roi
+    if x + w > src_w or y + h > src_h:
+        raise ValueError(f"{src}: ROI {(x, y, w, h)} exceeds source {src_w}x{src_h}")
+
+
 def probe_chunk(path: str) -> dict:
     out = _run(
         [
@@ -150,6 +177,7 @@ def verify_coverage(plan, durations, chunk_s=300.0, overlap_s=1.0, tol=0.1) -> N
 
 def encode_chunk(src: str, start: float, dur: float, roi, half: bool, out_path: str) -> None:
     x, y, w, h = roi
+    check_roi(roi, *probe_size(src), src)
     n_frames = round(dur * FPS)
     vf = f"fps={FPS},crop={w}:{h}:{x}:{y}"
     width, height = w, h
@@ -182,6 +210,9 @@ def ingest(crossing, session, roi, raw_files, chunk_s=300.0, overlap_s=1.0, half
             for row in csv.DictReader(fh):
                 recorded[row["chunk_id"]] = row
     durations = [probe_duration(p) for p in raw_files]
+    sizes = [probe_size(p) for p in raw_files]
+    for p, (sw, sh) in zip(raw_files, sizes):
+        check_roi(roi, sw, sh, p)
     # One streaming pass per raw file: the fingerprint proves the reuse
     # candidate below is the same footage, not a same-named replacement.
     src_digests = {p: sha256_file(p) for p in raw_files}
@@ -196,6 +227,7 @@ def ingest(crossing, session, roi, raw_files, chunk_s=300.0, overlap_s=1.0, half
             "chunk_id": chunk_id,
             "session_id": session,
             "src_file": os.path.basename(raw_files[src_idx]),
+            "src_start_s": round(start, 3),
             "t0_s": round(t0, 3),
             "duration_s": round(n_frames / FPS, 3),
             "fps": FPS,
@@ -209,6 +241,9 @@ def ingest(crossing, session, roi, raw_files, chunk_s=300.0, overlap_s=1.0, half
         }
         # Reuse only when every planned field matches and the file is intact:
         # a re-ingest with another ROI, --half or --chunk-s must re-encode.
+        # The source-relative start is part of the key so a retimed file
+        # cannot reuse footage from the wrong time; rows written before
+        # src_start_s existed compare as None and re-encode.
         old = recorded.get(chunk_id)
         if (
             old is not None
@@ -230,7 +265,8 @@ def ingest(crossing, session, roi, raw_files, chunk_s=300.0, overlap_s=1.0, half
 
 
 def _check() -> None:
-    """Ingest self-check: 65 s testsrc2, re-runs, param changes, long audio."""
+    """Ingest self-check: 65 s testsrc2, re-runs, param changes, long audio,
+    ROI bounds, source-relative reuse key, legacy manifest upgrade."""
     import shutil
     import tempfile
 
@@ -263,6 +299,7 @@ def _check() -> None:
         rows = ingest("x", "s1", (0, 0, 320, 240), [raw], chunk_s=30.0)
         assert [r["chunk_id"] for r in rows] == ["s1-c00", "s1-c01", "s1-c02"], rows
         assert [r["t0_s"] for r in rows] == [0.0, 29.0, 58.0], rows
+        assert [r["src_start_s"] for r in rows] == [0.0, 29.0, 58.0], rows
         frames = []
         for row in rows:
             path = os.path.join(tmp, "runs", "x", "cache", "chunks", row["chunk_id"] + ".mp4")
@@ -317,6 +354,69 @@ def _check() -> None:
         rows6 = ingest("x", "s1", (0, 0, 160, 120), [raw], chunk_s=20.0)
         assert [r["src_sha256"] for r in rows6] == [sha256_file(raw)] * 4, rows6
         assert rows6[0]["sha256"] != rows4[0]["sha256"], "replaced footage reused"
+
+        # An ROI outside the source is refused: FFmpeg would clamp the
+        # offset and record coordinates that were never encoded.
+        for bad_roi in ((1000, 0, 160, 120), (0, 200, 160, 120), (200, 0, 160, 120)):
+            try:
+                ingest("x", "s1", bad_roi, [raw], chunk_s=20.0)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"oversized ROI accepted: {bad_roi}")
+        try:
+            encode_chunk(raw, 0.0, 1.0, (1000, 0, 160, 120), False,
+                         os.path.join(tmp, "runs", "x", "cache", "chunks", "bad.mp4"))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("encode_chunk accepted an out-of-range ROI")
+
+        # A retimed first file must not let the second file reuse stale
+        # footage: c02 keeps its session time but moves within its source.
+        def make_raw(path, dur, src="testsrc2"):
+            _run(
+                [
+                    "ffmpeg", "-nostdin", "-y", "-v", "error",
+                    "-f", "lavfi", "-i", f"{src}=size=320x240:rate=30:duration={dur}",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", path,
+                ]
+            )
+
+        file_a = os.path.join(tmp, "a.mp4")
+        file_b = os.path.join(tmp, "b.mp4")
+        make_raw(file_a, 19)
+        make_raw(file_b, 28)
+        roi = (0, 0, 160, 120)
+        before = ingest("x", "s3", roi, [file_a, file_b], chunk_s=10.0)
+        assert [r["chunk_id"] for r in before] == ["s3-c%02d" % n for n in range(5)], before
+        c02_before = next(r for r in before if r["chunk_id"] == "s3-c02")
+        assert (c02_before["t0_s"], c02_before["src_start_s"]) == (19.0, 0.0), c02_before
+        c02_path = os.path.join(tmp, "runs", "x", "cache", "chunks", "s3-c02.mp4")
+        c02_stamp = os.path.getmtime(c02_path)
+        make_raw(file_a, 10)
+        after = ingest("x", "s3", roi, [file_a, file_b], chunk_s=10.0)
+        c02_after = next(r for r in after if r["chunk_id"] == "s3-c02")
+        assert (c02_after["t0_s"], c02_after["src_start_s"]) == (19.0, 9.0), c02_after
+        assert c02_after["src_sha256"] == c02_before["src_sha256"], "file B changed under test"
+        assert os.path.getmtime(c02_path) != c02_stamp, "c02 reused footage from the wrong time"
+
+        # Manifest rows written before src_start_s existed re-encode.
+        csv_path = os.path.join(tmp, "runs", "x", "s3", "chunks.csv")
+        with open(csv_path, newline="") as fh:
+            legacy_rows = list(csv.DictReader(fh))
+        legacy_fields = [c for c in CHUNKS_COLUMNS if c != "src_start_s"]
+        with open(csv_path, "w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=legacy_fields)
+            writer.writeheader()
+            for row in legacy_rows:
+                writer.writerow({c: row[c] for c in legacy_fields})
+        legacy_stamp = {r["chunk_id"]: os.path.getmtime(os.path.join(tmp, "runs", "x", "cache", "chunks", r["chunk_id"] + ".mp4")) for r in legacy_rows}
+        upgraded = ingest("x", "s3", roi, [file_a, file_b], chunk_s=10.0)
+        assert all("src_start_s" in r for r in upgraded), "manifest not upgraded"
+        for r in upgraded:
+            path = os.path.join(tmp, "runs", "x", "cache", "chunks", r["chunk_id"] + ".mp4")
+            assert os.path.getmtime(path) != legacy_stamp[r["chunk_id"]], f"legacy row reused for {r['chunk_id']}"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("ingest --check: PASS (chunks, idempotent, re-ingest, long audio)")
