@@ -1,2 +1,4 @@
-# Suri implementation. Runtime deps are stdlib + ffmpeg for now.
-# The Meta API client (openai package) arrives with sam.py / agent.py.
+# Suri runtime deps (spec 03 section 5, spec 04 section 5): numpy + OpenCV only,
+# no SciPy. GUI pick/draw (PR3) needs opencv-python, not the headless build.
+numpy
+opencv-python>=4.10,<5
