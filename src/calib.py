@@ -18,6 +18,38 @@ import cv2
 import numpy as np
 
 
+def _mds_seed(ids, dist_of):
+    """Classical-MDS layout over shortest-path distances, gauge-aligned.
+
+    Fallback initializer when greedy circle seeding stalls: rigid networks
+    whose links never offer two placed neighbors (e.g. bipartite K3,3
+    sets). Raises ValueError on disconnected graphs or degenerate
+    embeddings; LM and the rank test still decide the fit.
+    """
+    n = len(ids)
+    idx = {pid: k for k, pid in enumerate(ids)}
+    D = np.full((n, n), np.inf)
+    np.fill_diagonal(D, 0.0)
+    for (a, b), d in dist_of.items():
+        if D[idx[a], idx[b]] > d:
+            D[idx[a], idx[b]] = D[idx[b], idx[a]] = d
+    for k in range(n):
+        D = np.minimum(D, D[:, [k]] + D[[k], :])
+    if not np.all(np.isfinite(D)):
+        raise ValueError("disconnected distance graph")
+    J = np.eye(n) - np.ones((n, n)) / n
+    vals, vecs = np.linalg.eigh(-0.5 * J @ (D ** 2) @ J)
+    top = np.argsort(vals)[::-1][:2]
+    if vals[top[1]] <= 1e-12:
+        raise ValueError("degenerate MDS embedding")
+    X = vecs[:, top] * np.sqrt(np.maximum(vals[top], 0.0))
+    X = X - X[idx[ids[0]]]
+    ang = math.atan2(X[idx[ids[1]], 1], X[idx[ids[1]], 0])
+    c, s = math.cos(ang), math.sin(ang)
+    Xr = np.column_stack([c * X[:, 0] + s * X[:, 1], -s * X[:, 0] + c * X[:, 1]])
+    return {pid: (float(Xr[idx[pid], 0]), float(Xr[idx[pid], 1])) for pid in ids}
+
+
 def _circle_pair(c0, r0, c1, r1):
     """The two intersections of circles (c0, r0) and (c1, r1)."""
     dx, dy = c1[0] - c0[0], c1[1] - c0[1]
@@ -73,7 +105,15 @@ def solve_network(points, distances):
                 progressed = True
                 break
         if not progressed:
-            raise ValueError(f"points with fewer than 2 links: {remaining}")
+            # Greedy circle seeding stalls on rigid networks whose links
+            # never offer two placed neighbors (e.g. bipartite K3,3 sets).
+            # Fall back to a classical-MDS layout over shortest-path
+            # distances, gauge-aligned; LM and the rank test still decide.
+            try:
+                placed = _mds_seed(ids, dist_of)
+            except ValueError:
+                raise ValueError(f"points with fewer than 2 links: {remaining}") from None
+            remaining = []
 
     # Gauge: p1 fixed, p2 = (X2, 0) with X2 free; the P1-P2 fit distance
     # constrains it, so unknowns are 2N - 3 and only 3 columns drop out.
@@ -277,17 +317,30 @@ def movement(gate_ids):
 
 
 def _convex(poly):
-    """True when consecutive edge cross products keep one sign (4.5)."""
-    n = len(poly)
-    signs = set()
+    """True when every vertex lies on one closed side of every directed
+    edge (spec 03 section 4.5). Rejects degenerate (zero-area, repeated
+    vertices) and self-crossing polygons that consecutive-turn tests
+    accept, such as collinear chains and consistently-turning stars."""
+    pts = [(float(x), float(y)) for x, y in poly]
+    n = len(pts)
+    if n < 3 or len(set(pts)) != n:
+        return False
+    sign = 0
     for i in range(n):
-        x1, y1 = poly[i]
-        x2, y2 = poly[(i + 1) % n]
-        x3, y3 = poly[(i + 2) % n]
-        z = (x2 - x1) * (y3 - y2) - (y2 - y1) * (x3 - x2)
-        if abs(z) > 1e-9:
-            signs.add(1 if z > 0 else -1)
-    return len(signs) <= 1
+        ax, ay = pts[i]
+        bx, by = pts[(i + 1) % n]
+        for j in range(n):
+            if j == i or j == (i + 1) % n:
+                continue
+            cx, cy = pts[j]
+            z = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+            if abs(z) > 1e-9:
+                s = 1 if z > 0 else -1
+                if sign == 0:
+                    sign = s
+                elif s != sign:
+                    return False
+    return sign != 0
 
 
 def _exit_leg(entry_leg, turn):
@@ -301,22 +354,25 @@ _ENTRY_OF = {"EB": "W", "WB": "E", "NB": "S", "SB": "N"}
 def validate_zones(crosswalks, gates, conflict_areas, frame_size):
     """Hard zone checks (spec 03 section 4.5); returns warnings.
 
-    Fails on bad/duplicated ids, approach/dir/crosswalk/movement fields
-    that disagree with the id, a CA on the wrong leg, polygons with < 3
-    vertices or non-convex, crosswalks without exactly 4 vertices, and
-    overlapping gates. Warns on CA vertices outside their crosswalk.
+    Fails on ids outside their collection namespace, duplicated ids,
+    approach/dir/crosswalk/movement fields that disagree with the id, a CA
+    whose id does not derive from its movement, a CA on the wrong leg,
+    polygons with < 3 vertices or non-convex (half-plane test, which also
+    rejects degenerate and self-crossing shapes), crosswalks without
+    exactly 4 vertices, and overlapping gates. Warns on CA vertices
+    outside their crosswalk.
     """
     seen = set()
 
-    def claim(i):
-        if not re.fullmatch(r"(XW-[NESW]|G-[NESW]-(in|out)|CA-[NESW]-(EB|WB|NB|SB)[RLTU])", i):
-            raise ValueError(f"bad zone id {i}")
+    def claim(i, pattern, kind):
+        if not re.fullmatch(pattern, i):
+            raise ValueError(f"bad {kind} id {i}")
         if i in seen:
             raise ValueError(f"duplicated zone id {i}")
         seen.add(i)
 
     for c in crosswalks:
-        claim(c["id"])
+        claim(c["id"], r"XW-[NESW]", "crosswalk")
         v = [tuple(p) for p in c["polygon_px"]]
         if len(v) != 4:
             raise ValueError(f"{c['id']}: crosswalk needs exactly 4 vertices")
@@ -324,7 +380,7 @@ def validate_zones(crosswalks, gates, conflict_areas, frame_size):
             raise ValueError(f"{c['id']}: non-convex polygon")
     xw_leg = {c["id"]: c["id"].split("-")[1] for c in crosswalks}
     for g in gates:
-        claim(g["id"])
+        claim(g["id"], r"G-[NESW]-(in|out)", "gate")
         leg, direction = g["id"].split("-")[1:]
         if g["approach"] != leg or g["dir"] != direction:
             raise ValueError(f"{g['id']}: approach/dir disagree with id")
@@ -343,11 +399,14 @@ def validate_zones(crosswalks, gates, conflict_areas, frame_size):
         mask |= layer
     warnings = []
     for ca in conflict_areas:
-        claim(ca["id"])
+        claim(ca["id"], r"CA-[NESW]-(EB|WB|NB|SB)[RLTU]", "conflict area")
         leg = ca["id"].split("-")[1]
         m = re.fullmatch(r"(EB|WB|NB|SB)-(right|left|thru|uturn)", ca["movement"])
         if not m or ca["crosswalk"] not in xw_leg:
             raise ValueError(f"{ca['id']}: bad movement or crosswalk")
+        code = {"right": "R", "left": "L", "thru": "T", "uturn": "U"}[m.group(2)]
+        if ca["id"] != f"CA-{leg}-{m.group(1)}{code}":
+            raise ValueError(f"{ca['id']}: movement disagrees with id")
         if xw_leg[ca["crosswalk"]] != leg:
             raise ValueError(f"{ca['id']}: not on its crosswalk leg")
         entry, turn = _ENTRY_OF[m.group(1)], m.group(2)
@@ -437,6 +496,17 @@ def check():
     assert max(math.dist(coords[pid], truth[pid]) for pid in ids) <= 0.01, report
     assert coords["P3"][1] > 0, coords["P3"]
     assert report["rank"] == 2 * 12 - 3, report
+    # 1b. Fallback: bipartite K3,3 links stall greedy seeding (no point
+    # ever has two placed neighbors) but still solve through MDS seeding.
+    k_truth = {"P1": (0.0, 0.0), "P2": (6.0, 1.0), "P3": (2.0, 5.0),
+               "P4": (5.0, 6.0), "P5": (-1.0, 8.0), "P6": (7.0, 4.0)}
+    k_ids = ["P1", "P2", "P3", "P4", "P5", "P6"]
+    k_dist = [{"a": a, "b": b, "measured_m": math.dist(k_truth[a], k_truth[b]),
+               "method": "tape", "control": False}
+              for a in ["P1", "P3", "P5"] for b in ["P2", "P4", "P6"]]
+    _, k_rep = solve_network([{"id": p} for p in k_ids], k_dist)
+    assert k_rep["rank"] == 2 * 6 - 3, k_rep
+    assert k_rep["max_m"] <= 0.01, k_rep
     cut = [d for d in distances
            if not ({d["a"], d["b"]} in ({"P10", "P12"}, {"P7", "P12"}, {"P12", "P3"}))]
     try:
@@ -513,6 +583,28 @@ def check():
         pass
     else:
         raise AssertionError("CA-N-EBR on XW-N accepted")
+
+    # 7b. Strict geometry and namespaces: star, collinear, bow-tie and
+    # dart polygons are non-convex; ids must match their collection; the
+    # CA id must derive from its movement.
+    assert not _convex([(0, 3), (2, -3), (-3, 1), (3, 1), (-2, -3)]), "star"
+    assert not _convex([(0, 0), (1, 1), (2, 2)]), "collinear"
+    assert not _convex([(0, 0), (2, 2), (0, 2), (2, 0)]), "bow-tie"
+    assert not _convex([(0, 0), (4, 0), (1, 1), (4, 4), (0, 4)]), "dart"
+    assert _convex([(0, 0), (4, 0), (4, 3), (0, 3)])
+    square = [[10, 10], [20, 10], [20, 20], [10, 20]]
+    for cw, ga, ca, why in [
+        ([{"id": "G-W-in", "polygon_px": square}], [], [], "gate-named crosswalk"),
+        ([{"id": "XW-S", "polygon_px": xw_px}], [],
+         [{"id": "CA-S-EBR", "crosswalk": "XW-S", "movement": "SB-thru",
+           "polygon_px": ca_px}], "movement/id mismatch"),
+    ]:
+        try:
+            validate_zones(cw, ga, ca, (1920, 1080))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{why} accepted")
 
 
 def main(argv=None):
