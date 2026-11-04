@@ -11,8 +11,10 @@ builds its fixture in code (section 6): no files, no GUI.
 
 from __future__ import annotations
 
+import json
 import math
 import re
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -486,6 +488,123 @@ def _calib_dict(H, ids, truth, picks, controls, distances):
             "reprojection_rmse_m": rmse}
 
 
+CALIB_JSON = "calib.json"
+ZONES_JSON = "zones.json"
+ZONES_PNG = "zones.png"
+
+
+def load_inputs(points_path, distances_path, controls_path, picks_path,
+                zones_path):
+    """Read the five Q2 JSON inputs; missing files raise FileNotFoundError."""
+
+    def read(path):
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    return {"points": read(points_path), "distances": read(distances_path),
+            "controls": read(controls_path), "picks": read(picks_path),
+            "zones": read(zones_path)}
+
+
+def picks_template(points):
+    """Blank picks file ({id: None}) for the manual pick step."""
+    return {p["id"]: None for p in points}
+
+
+def draw_zones(zones_doc, out_png):
+    """Render crosswalks/gates/conflict areas to a PNG at frame_size."""
+    try:
+        width, height = (int(zones_doc["frame_size"][0]),
+                         int(zones_doc["frame_size"][1]))
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("zones needs frame_size [width, height]") from None
+    img = np.zeros((height, width, 3), dtype=np.uint8)
+    for ca in zones_doc.get("conflict_areas", []):
+        poly = np.asarray(ca["polygon_px"], dtype=np.int32)
+        cv2.fillPoly(img, [poly], (0, 0, 180))
+        cv2.polylines(img, [poly], True, (0, 0, 255), 2)
+    for gate in zones_doc.get("gates", []):
+        poly = np.asarray(gate["polygon_px"], dtype=np.int32)
+        color = (255, 0, 0) if gate.get("dir") == "in" else (0, 165, 255)
+        dim = tuple(c // 4 for c in color)
+        cv2.fillPoly(img, [poly], dim)
+        cv2.polylines(img, [poly], True, color, 2)
+    for crosswalk in zones_doc.get("crosswalks", []):
+        poly = np.asarray(crosswalk["polygon_px"], dtype=np.int32)
+        cv2.fillPoly(img, [poly], (30, 120, 30))
+        cv2.polylines(img, [poly], True, (0, 255, 0), 2)
+    labeled = (*zones_doc.get("crosswalks", []), *zones_doc.get("gates", []),
+               *zones_doc.get("conflict_areas", []))
+    for zone in labeled:
+        x, y = int(zone["polygon_px"][0][0]), int(zone["polygon_px"][0][1])
+        cv2.putText(img, zone["id"], (max(x, 0), max(y - 4, 12)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1,
+                    cv2.LINE_AA)
+    out = Path(out_png)
+    parent = str(out.parent)
+    if parent not in ("", "."):
+        out.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(out), img):
+        raise ValueError(f"could not write {out}")
+    return out
+
+
+def solve_to_dir(inputs, out_dir):
+    """Solve network + homography and write calib/zones outputs.
+
+    Computes everything first; the FR-4 gate (calib_ok) and zone validation
+    run before any write, so a failing calibration leaves ``out_dir``
+    without outputs. Returns {"calib": calib_doc, "warnings": [...]}.
+    """
+    out = Path(out_dir)
+    points = inputs["points"]
+    distances = inputs["distances"]
+    controls = inputs["controls"]
+    picks = inputs["picks"]
+    zones = inputs["zones"]
+    if not points:
+        raise ValueError("need >= 1 ground point")
+    coords, _report = solve_network(points, distances)
+    ids = [p["id"] for p in points]
+    have = [(pid, picks[pid]) for pid in ids if picks.get(pid) is not None]
+    if len(have) < 4:
+        raise ValueError(f"need >= 4 picked points, got {len(have)}")
+    for cid, a, b in [(c["id"], c["a"], c["b"]) for c in controls]:
+        if picks.get(a) is None or picks.get(b) is None:
+            raise ValueError(f"control {cid} has no pick")
+    control_pairs = [(c["id"], c["a"], c["b"]) for c in controls]
+    picked = {pid: picks.get(pid) for pid in ids}
+    H, _mask = fit_homography(np.array([xy for _, xy in have]),
+                              np.array([coords[pid] for pid, _ in have]))
+    calib_doc = _calib_dict(H, ids, coords, picked, control_pairs, distances)
+    if not calib_ok(calib_doc):
+        raise ValueError(
+            "calibration rejected by FR-4 gate: "
+            f"rmse={calib_doc['reprojection_rmse_m']:.3f} m")
+    try:
+        frame = (int(zones["frame_size"][0]), int(zones["frame_size"][1]))
+        crosswalks = zones["crosswalks"]
+        gates = zones["gates"]
+        areas = zones["conflict_areas"]
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(
+            "zones needs frame_size, crosswalks, gates, conflict_areas"
+        ) from None
+    warnings = validate_zones(crosswalks, gates, areas, frame)
+    zones_doc = {"frame_size": [frame[0], frame[1]], "crosswalks": crosswalks,
+                 "gates": gates, "conflict_areas": areas,
+                 "warnings": warnings}
+    out.mkdir(parents=True, exist_ok=True)
+    (out / CALIB_JSON).write_text(
+        json.dumps(calib_doc, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
+    (out / ZONES_JSON).write_text(
+        json.dumps(zones_doc, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
+    draw_zones(zones_doc, out / ZONES_PNG)
+    return {"calib": calib_doc, "warnings": warnings}
+
+
 def check():
     """Spec 03 section 6: the 7 asserts; raises AssertionError."""
     ids, truth, distances, controls, H_true, picks, xw_m, xw_px = _fixture()
@@ -606,18 +725,154 @@ def check():
         else:
             raise AssertionError(f"{why} accepted")
 
+    # 8. Writers: file fixtures solve to runs-style outputs gated by FR-4.
+    _check_writers()
+
+
+def _check_writers():
+    """File fixtures -> runs-style calib.json/zones.json/zones.png (Q2).
+
+    Solves fixtures/calib/*.json into a temp dir and asserts the outputs,
+    the FR-4 gate, idempotency, and edge cases.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    fix = Path(__file__).resolve().parent.parent / "fixtures" / "calib"
+    inputs = load_inputs(str(fix / "points.json"), str(fix / "distances.json"),
+                         str(fix / "controls.json"), str(fix / "picks.json"),
+                         str(fix / "zones_input.json"))
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "g1-20261027"
+        result = solve_to_dir(inputs, out)
+        assert result["warnings"] == [], result["warnings"]
+        calib_doc = json.loads((out / "calib.json").read_text(encoding="utf-8"))
+        assert calib_doc["method"] == "ransac"
+        assert calib_doc["lens"] is None
+        assert calib_doc["ransac_thresh_m"] == 0.2
+        assert len(calib_doc["H"]) == 3
+        by_id = {p["id"]: p for p in calib_doc["points"]}
+        assert len(by_id) == 12 and by_id["P9"]["px"] is None
+        assert {c["id"] for c in calib_doc["control"]} == {"C1", "C2"}
+        assert all(c["error_pct"] <= 15 for c in calib_doc["control"])
+        assert calib_doc["reprojection_rmse_m"] <= 0.01
+        assert calib_ok(calib_doc)
+        zones_doc = json.loads((out / "zones.json").read_text(encoding="utf-8"))
+        assert zones_doc["frame_size"] == [1920, 1080]
+        assert zones_doc["warnings"] == []
+        img = cv2.imread(str(out / "zones.png"))
+        assert img is not None and list(img.shape) == [1080, 1920, 3]
+        assert int((img != 0).sum()) > 0
+        first = (out / "calib.json").read_bytes()
+        first_z = (out / "zones.json").read_bytes()
+        solve_to_dir(inputs, out)
+        assert (out / "calib.json").read_bytes() == first
+        assert (out / "zones.json").read_bytes() == first_z
+        redraw = out / "zones_redraw.png"
+        draw_zones(zones_doc, str(redraw))
+        again = cv2.imread(str(redraw))
+        assert again is not None and list(again.shape) == [1080, 1920, 3]
+        assert picks_template(inputs["points"]) == {
+            p["id"]: None for p in inputs["points"]}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "bad"
+        bad = dict(inputs["picks"])
+        bad["P9"] = [0.0, 0.0]
+        try:
+            solve_to_dir({**inputs, "picks": bad}, out)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("bad calibration wrote outputs")
+        assert not (out / "calib.json").exists()
+        assert not (out / "zones.json").exists()
+        assert not (out / "zones.png").exists()
+
+    for label, mutate in [
+        ("empty points", {"points": []}),
+        ("all-null picks",
+         {"picks": {p["id"]: None for p in inputs["points"]}}),
+    ]:
+        edited = dict(inputs)
+        edited.update(mutate)
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                solve_to_dir(edited, Path(tmp) / "edge")
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"{label} accepted")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        zones_copy = json.loads(json.dumps(inputs["zones"]))
+        zones_copy["gates"][1]["polygon_px"] = zones_copy["gates"][0]["polygon_px"]
+        try:
+            solve_to_dir({**inputs, "zones": zones_copy}, Path(tmp) / "overlap")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("overlapping gates accepted")
+
 
 def main(argv=None):
     import argparse
 
     parser = argparse.ArgumentParser(description="Camera calibration core (spec 03).")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--solve", action="store_true",
+                        help="solve network + homography, write calib.json/zones.json/zones.png")
+    parser.add_argument("--draw", action="store_true",
+                        help="render zones.png from a zones.json file")
+    parser.add_argument("--pick", action="store_true",
+                        help="write a blank picks template from a points file")
+    parser.add_argument("--points", default=None)
+    parser.add_argument("--distances", default=None)
+    parser.add_argument("--controls", default=None)
+    parser.add_argument("--picks", default=None)
+    parser.add_argument("--zones", default=None)
+    parser.add_argument("--out-dir", default=None)
+    parser.add_argument("--out-png", default=None)
+    parser.add_argument("--out-picks", default=None)
     args = parser.parse_args(argv)
     if args.check:
         check()
-        print("calib --check: PASS (network, RANSAC, H, controls, FR-4, zones, movement)")
+        print("calib --check: PASS (network, RANSAC, H, controls, FR-4, zones, movement, writers)")
         return
-    parser.error("only --check is built in PR2; pick/draw/solve come in PR3")
+    try:
+        if args.solve:
+            for flag in ("points", "distances", "controls", "picks",
+                         "zones", "out_dir"):
+                if getattr(args, flag) is None:
+                    parser.error(f"--solve needs --{flag.replace('_', '-')}")
+            inputs = load_inputs(args.points, args.distances, args.controls,
+                                 args.picks, args.zones)
+            result = solve_to_dir(inputs, args.out_dir)
+            print(f"solved {args.out_dir}: "
+                  f"rmse={result['calib']['reprojection_rmse_m']:.4f} m")
+            return
+        if args.draw:
+            if args.zones is None or args.out_png is None:
+                parser.error("--draw needs --zones and --out-png")
+            with open(args.zones, encoding="utf-8") as fh:
+                zones_doc = json.load(fh)
+            draw_zones(zones_doc, args.out_png)
+            print(f"drew {args.out_png}")
+            return
+        if args.pick:
+            if args.points is None or args.out_picks is None:
+                parser.error("--pick needs --points and --out-picks")
+            with open(args.points, encoding="utf-8") as fh:
+                points = json.load(fh)
+            Path(args.out_picks).write_text(
+                json.dumps(picks_template(points), indent=2, sort_keys=True)
+                + "\n", encoding="utf-8")
+            print(f"wrote {args.out_picks}")
+            return
+    except ValueError as exc:
+        parser.error(str(exc))
+    parser.error("choose one of --check, --solve, --draw, --pick")
 
 
 if __name__ == "__main__":

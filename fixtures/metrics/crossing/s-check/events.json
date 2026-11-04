@@ -1,0 +1,92 @@
+[
+ {
+  "event_id": "E-9001",
+  "session_id": "s-check",
+  "chunk_id": "s-check-c00",
+  "tier": "serious",
+  "pet_s": 0.5,
+  "conflict_area": "XW-S",
+  "window_s": [
+   94.0,
+   98.5
+  ],
+  "first": {
+   "cls": "person",
+   "obj_id": "o1",
+   "t_exit_s": 96.0
+  },
+  "second": {
+   "cls": "car",
+   "obj_id": "o2",
+   "t_enter_s": 96.5
+  },
+  "status": "verified",
+  "verify": {
+   "reason_codes": [],
+   "tool_calls": [
+    "kinematics",
+    "explain"
+   ]
+  }
+ },
+ {
+  "event_id": "E-9002",
+  "session_id": "s-check",
+  "chunk_id": "s-check-c01",
+  "tier": "close",
+  "pet_s": 1.2,
+  "conflict_area": "XW-S",
+  "window_s": [
+   102.0,
+   107.2
+  ],
+  "first": {
+   "cls": "person",
+   "obj_id": "o3",
+   "t_exit_s": 104.0
+  },
+  "second": {
+   "cls": "car",
+   "obj_id": "o4",
+   "t_enter_s": 105.2
+  },
+  "status": "verified",
+  "verify": {
+   "reason_codes": [],
+   "tool_calls": [
+    "kinematics",
+    "explain"
+   ]
+  }
+ },
+ {
+  "event_id": "E-9003",
+  "session_id": "s-check",
+  "chunk_id": "s-check-c01",
+  "tier": "serious",
+  "pet_s": 0.4,
+  "conflict_area": "XW-S",
+  "window_s": [
+   140.0,
+   145.0
+  ],
+  "first": {
+   "cls": "person",
+   "obj_id": "o5",
+   "t_exit_s": 142.0
+  },
+  "second": {
+   "cls": "car",
+   "obj_id": "o6",
+   "t_enter_s": 142.4
+  },
+  "status": "verified",
+  "verify": {
+   "reason_codes": [],
+   "tool_calls": [
+    "kinematics",
+    "explain"
+   ]
+  }
+ }
+]

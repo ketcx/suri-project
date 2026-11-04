@@ -1,0 +1,1 @@
+{"conflict_areas": [{"crosswalk": "XW-S", "id": "XW-S", "movement": "NS", "polygon_px": [[400, 400], [900, 400], [900, 500], [400, 500]]}], "crosswalks": [{"axis": "EW", "id": "XW-S", "polygon_px": [[100, 400], [1180, 400], [1180, 500], [100, 500]]}], "frame_size": [1280, 720], "gates": [], "warnings": []}

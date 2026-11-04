@@ -1,0 +1,8 @@
+{
+  "event_id": "E-2005",
+  "ok": true,
+  "reason_codes": [
+    "paths_do_not_cross"
+  ],
+  "status": "rejected"
+}

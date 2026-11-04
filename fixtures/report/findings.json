@@ -1,0 +1,31 @@
+{
+ "findings": [
+  {
+   "finding_id": "F-01",
+   "cluster_id": "F-01",
+   "event_ids": [
+    "E-9001"
+   ],
+   "clip_ids": [
+    "E-9001"
+   ],
+   "text_template": "{{F.n_events}} encuentros verificados en la zona de conflicto {{F.conflict_area}}, con {{F.n_serious}} serios y un PET mínimo de {{F.pet_min_s}} s."
+  }
+ ],
+ "recommendations": [],
+ "summary": {
+  "es": "Se verificaron candidatos con conflicto entre peatón y vehículo. La causa más frecuente fue {{run.top_cause}}. Se propone como medida un intervalo peatonal adelantado. La decisión queda en manos del equipo de ingeniería.",
+  "en": "Verified."
+ },
+ "run": {
+  "n_candidates": 1,
+  "n_verified": 1,
+  "n_rejected": 0,
+  "n_unverified": 0,
+  "n_serious_verified": 1,
+  "hours_observed": 0.0,
+  "top_cause": "no determinada",
+  "rejected_by_reason": {},
+  "n_recommendations": 0
+ }
+}

@@ -1,0 +1,68 @@
+{
+  "hours_observed": 0.045,
+  "serious": {
+    "rate_per_h": 66.7,
+    "rate_per_h_lo": 0.0,
+    "rate_per_h_hi": 142.1,
+    "n": 3
+  },
+  "h1": {
+    "value": null,
+    "value_lo": null,
+    "value_hi": null,
+    "n": 0
+  },
+  "h2": {
+    "value": null,
+    "value_lo": null,
+    "value_hi": null,
+    "n": 0
+  },
+  "h3": {
+    "precision": null,
+    "precision_lo": null,
+    "precision_hi": null,
+    "precision_n": 0,
+    "recall": null,
+    "recall_lo": null,
+    "recall_hi": null,
+    "recall_n": 0,
+    "f1": null,
+    "f1_lo": null,
+    "f1_hi": null,
+    "f1_n": 0
+  },
+  "h4": {
+    "precision_before": null,
+    "precision_after": null,
+    "recall_lost": null,
+    "recall_lost_lo": null,
+    "recall_lost_hi": null,
+    "n": 0
+  },
+  "h5": {
+    "value": null,
+    "value_lo": null,
+    "value_hi": null,
+    "n": 0
+  },
+  "h6": {
+    "value": 0.59,
+    "value_lo": null,
+    "value_hi": null,
+    "ledger_usd": 2.797095,
+    "footage_min": 4.755
+  },
+  "pet_error": {
+    "mae_s": null,
+    "mae_s_lo": null,
+    "mae_s_hi": null,
+    "n": 0
+  },
+  "agreement": null,
+  "clearance": [],
+  "unscored": [
+    "ground_truth.csv missing: h1, h3, h4, h5, pet_error and agreement stay null",
+    "eval.json missing: h2 stays null"
+  ]
+}

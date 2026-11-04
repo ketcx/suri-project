@@ -1,0 +1,12 @@
+{
+  "actors": [
+    "passenger car",
+    "pedestrian"
+  ],
+  "confidence": "high",
+  "conflict_type": "through",
+  "dropped": [],
+  "false_positive": false,
+  "likely_cause": "no cede el paso",
+  "model": "muse-spark-1.3"
+}
