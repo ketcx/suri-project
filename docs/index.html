@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Inspección de seguridad vial asistida por video: demostración del método</title>
+<style>body{font-family:sans-serif;max-width:60em;margin:auto;padding:1em}
+table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px}</style>
+</head>
+<body>
+<h1>Inspección de seguridad vial asistida por video: demostración del método</h1>
+
+<section>
+<h2>Contexto: García Roel y Ahuehuetes, Monterrey</h2>
+<p>En el cruce hubo 16 choques en
+2019–2024 y ningún atropello registrado.
+Los registros de choques no ven los casi-atropellos. Este cruce es el
+siguiente paso: todavía no se ha grabado.</p>
+</section>
+<section>
+<h2>Resultados de la demostración: video abierto de la Universidad de Murcia (España), no de Monterrey</h2>
+<p>Se verificaron candidatos con conflicto entre peatón y vehículo. La causa más frecuente fue peatón esperando. El cruce de la demostración no tiene semáforo, así que no se evalúa un intervalo peatonal adelantado. La decisión queda en manos del equipo de ingeniería.</p>
+<table>
+<tr><th>evento</th><th>PET (s)</th><th>nivel</th><th>veredicto</th>
+<th>códigos</th><th>keyframe difuminado</th></tr>
+<tr><td>E-2001</td><td>0.4</td><td>serious</td><td>verified</td><td>—</td><td><img src="clips/E-2001.jpg" alt="keyframe E-2001" width="320"></td></tr><tr><td>E-2002</td><td>0.0</td><td>serious</td><td>verified</td><td>—</td><td><img src="clips/E-2002.jpg" alt="keyframe E-2002" width="320"></td></tr><tr><td>E-2003</td><td>1.3</td><td>close</td><td>verified</td><td>—</td><td><img src="clips/E-2003.jpg" alt="keyframe E-2003" width="320"></td></tr><tr><td>E-2004</td><td>0.0</td><td>serious</td><td>rejected</td><td>paths_do_not_cross</td><td><img src="clips/E-2004.jpg" alt="keyframe E-2004" width="320"></td></tr><tr><td>E-2005</td><td>1.0</td><td>close</td><td>rejected</td><td>paths_do_not_cross</td><td><img src="clips/E-2005.jpg" alt="keyframe E-2005" width="320"></td></tr><tr><td>E-2006</td><td>0.2</td><td>serious</td><td>rejected</td><td>paths_do_not_cross</td><td><img src="clips/E-2006.jpg" alt="keyframe E-2006" width="320"></td></tr><tr><td>E-2007</td><td>0.0</td><td>serious</td><td>verified</td><td>—</td><td><img src="clips/E-2007.jpg" alt="keyframe E-2007" width="320"></td></tr>
+</table>
+</section>
+<section>
+<h2>Lo que dice el agente</h2>
+<p><strong>F-01</strong>: Zona de conflicto CA-S-SBT. Encuentros verificados: 3. Serios: 2. PET mínimo: 0.0 s.</p><p>Tipos: through; causas señaladas: peatón esperando; peatón esperando en acera.</p>
+<p><strong>F-02</strong>: Zona de conflicto CA-S-SBT. Encuentros verificados: 1. Serios: 1. PET mínimo: 0.0 s.</p><p>Tipos: through; causas señaladas: no cede el paso.</p>
+
+</section>
+<section>
+<h2>Fuentes</h2>
+<ul>
+<li>Videos: Sanchez-Iborra, R., Asensio-Garriga, R., Alarcon-Hellin,
+G., Bernal-Escobedo, L., Trevlakis, S., Tsiftsis, T., &amp; Skarmeta, A.
+(2026). Multi-perspective Traffic Video Recording (v1) [Data set].
+Zenodo. https://zenodo.org/records/18375218. Licencia CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/). Escenario 1, cámara RSU
+(RSU_1_no_fall.MOV). Cambios: recorte a 10 fps, personas y placas
+difuminadas, cajas y zonas superpuestas por Suri.</li>
+<li>Fuente: INEGI, ATUS 2023–2025 y Base municipal de accidentes georreferenciados 2019–2024.</li>
+<li>Modelos: SAM 3.1 para segmentación; Muse Wonder para verificar cada
+candidato con herramientas (nunca ve video); Muse Spark para explicar el clip
+difuminado. Llamadas y costos en el ledger del proyecto.</li>
+</ul>
+</section>
+<section>
+<h2>Limitaciones</h2>
+<ul>
+<li>Escenario controlado de otro país.</li><li>Un solo clip de una cámara fija.</li><li>PET sin validar contra anotación manual.</li><li>Sin velocidades métricas: el análisis usa píxeles.</li>
+</ul>
+</section>
+<section>
+<h2>La persona decide</h2>
+<p>El método propone; la decisión es del equipo de ingeniería.</p>
+<ul>
+<li><input type="checkbox"> Se acepta el informe tal como está.</li>
+<li><input type="checkbox"> Se rechaza: la evidencia no basta.</li>
+<li><input type="checkbox"> Se pide más evidencia (más sesiones, anotación manual del PET).</li>
+</ul>
+<p>Firma: ____________________ Fecha: __________</p>
+</section>
+</body>
+</html>

@@ -44,3 +44,6 @@ notes/
 
 # Reports / local runs
 *.log
+
+# Unblurred debug frames from SAM smoke tests (spec 09: only blurred media is published)
+runs/*/*/smoke.png

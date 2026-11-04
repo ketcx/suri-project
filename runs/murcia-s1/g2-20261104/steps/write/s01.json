@@ -1,0 +1,19 @@
+{
+  "scenario": "escenario mecánico",
+  "lpi_s": 3,
+  "baseline": {
+    "lpi_s": 0,
+    "serious": 5,
+    "close": 2,
+    "cleared": 0,
+    "n": 7
+  },
+  "result": {
+    "lpi_s": 3,
+    "serious": 0,
+    "close": 0,
+    "cleared": 7,
+    "n": 7
+  },
+  "corrections": []
+}

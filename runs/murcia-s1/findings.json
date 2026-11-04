@@ -1,0 +1,80 @@
+{
+  "crossing_id": "mty-garciaroel-ahuehuetes",
+  "sessions": [
+    "g2-20261104"
+  ],
+  "run": {
+    "mode": "batch",
+    "agent_model": "muse-wonder-1.0",
+    "explain_model": "meta-models/muse-spark-open",
+    "fallbacks": [],
+    "hours_observed": 0.045,
+    "n_candidates": 7,
+    "n_verified": 4,
+    "n_rejected": 3,
+    "n_unverified": 0,
+    "n_serious_verified": 3,
+    "n_concepts": 0,
+    "cost_usd": 0.16572,
+    "rejected_by_reason": {
+      "paths_do_not_cross": 3
+    },
+    "top_cause": "peatón esperando",
+    "n_recommendations": 0
+  },
+  "summary": {
+    "es": "Se verificaron candidatos con conflicto entre peatón y vehículo. La causa más frecuente fue {{run.top_cause}}. El cruce de la demostración no tiene semáforo, así que no se evalúa un intervalo peatonal adelantado. La decisión queda en manos del equipo de ingeniería.",
+    "en": "Verified candidates showed pedestrian-vehicle conflict. The most common cause was {{run.top_cause}}. The demo crossing has no traffic signal, so a leading pedestrian interval is not evaluated. The decision rests with the engineering team."
+  },
+  "findings": [
+    {
+      "finding_id": "F-01",
+      "cluster_id": "F-01",
+      "event_ids": [
+        "E-2001",
+        "E-2002",
+        "E-2003"
+      ],
+      "text_template": "Zona de conflicto {{F.conflict_area}}. Encuentros verificados: {{F.n_events}}. Serios: {{F.n_serious}}. PET mínimo: {{F.pet_min_s}} s.",
+      "evidence": {
+        "clips": [
+          "clips/E-2001.mp4",
+          "clips/E-2002.mp4",
+          "clips/E-2003.mp4"
+        ],
+        "keyframes": [
+          "clips/E-2001.jpg",
+          "clips/E-2002.jpg",
+          "clips/E-2003.jpg"
+        ]
+      }
+    },
+    {
+      "finding_id": "F-02",
+      "cluster_id": "F-02",
+      "event_ids": [
+        "E-2007"
+      ],
+      "text_template": "Zona de conflicto {{F.conflict_area}}. Encuentros verificados: {{F.n_events}}. Serios: {{F.n_serious}}. PET mínimo: {{F.pet_min_s}} s.",
+      "evidence": {
+        "clips": [
+          "clips/E-2007.mp4"
+        ],
+        "keyframes": [
+          "clips/E-2007.jpg"
+        ]
+      }
+    }
+  ],
+  "recommendations": [],
+  "references": [
+    {
+      "ref_id": "fhwa-hrt-18-044",
+      "citation": "FHWA-HRT-18-044 (leading pedestrian interval evaluation)",
+      "url": null,
+      "supports": [
+        "lpi"
+      ]
+    }
+  ]
+}

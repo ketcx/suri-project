@@ -1,0 +1,9 @@
+{
+ "scenario": "escenario mec\u00e1nico",
+ "clearance": [
+  {
+   "crosswalk": "XW-S",
+   "share_in_crosswalk_at_flash_end": 0.2
+  }
+ ]
+}

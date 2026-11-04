@@ -1,0 +1,31 @@
+{
+ "scenario": "escenario mecánico",
+ "ped_insert_s": 1.5,
+ "clear_pet_s": 3.0,
+ "results": {
+  "baseline": {
+   "lpi_s": 0,
+   "serious": 1,
+   "close": 0,
+   "cleared": 0,
+   "n": 1
+  },
+  "lpi_3": {
+   "lpi_s": 3,
+   "serious": 0,
+   "close": 0,
+   "cleared": 1,
+   "n": 1
+  },
+  "lpi_5": {
+   "lpi_s": 5,
+   "serious": 0,
+   "close": 0,
+   "cleared": 1,
+   "n": 1
+  }
+ },
+ "pick_lpi_s": 5,
+ "pick_ref": "counterfactual.lpi_5",
+ "clearance": []
+}

@@ -1,0 +1,39 @@
+{
+  "source": "INEGI. Estadística de Accidentes de Tránsito Terrestre en Zonas Urbanas y Suburbanas (ATUS), datos abiertos 1997–2025 (cifras definitivas 2025, publicadas 2026-07-29), y Base municipal de accidentes de tránsito georreferenciados 2019–2024",
+  "license": "Términos de libre uso de la información del INEGI — https://www.inegi.org.mx/inegi/terminos.html",
+  "attribution": "Fuente: INEGI, ATUS 2023–2025 y Base municipal de accidentes georreferenciados 2019–2024",
+  "urls": {
+    "atus_anual_csv": "https://www.inegi.org.mx/contenidos/programas/accidentes/datosabiertos/conjunto_de_datos_atus_anual_csv.zip",
+    "georref_shp_pattern": "https://www.inegi.org.mx/contenidos/programas/accidentes/datosabiertos/atus_<YEAR>_shp.zip"
+  },
+  "notes": [
+    "ATUS counts registered accidents in urban and suburban zones; deaths are only those at the scene, so ATUS undercounts deaths.",
+    "Edition used: the 2025 publication. INEGI revised the 2018–2024 series in it, so do not mix editions.",
+    "Georeferenced coordinates appear snapped to intersection nodes, not exact crash points.",
+    "Verified by the lead on 2026-10-26 against the downloaded files (NL 2025 accidents, Monterrey 2025 accidents, NL 2025 pedestrian collisions, crossing A counts)."
+  ],
+  "nuevo_leon": {
+    "2023": {"accidents": 80582, "pedestrian_collisions": 1874, "pedestrians_killed": 83, "pedestrians_injured": 1937},
+    "2024": {"accidents": 76210, "pedestrian_collisions": 1619, "pedestrians_killed": 93, "pedestrians_injured": 1694},
+    "2025": {"accidents": 71308, "pedestrian_collisions": 1520, "pedestrians_killed": 77, "pedestrians_injured": 1603}
+  },
+  "monterrey": {
+    "2023": {"accidents": 33666, "pedestrian_collisions": 747, "pedestrians_killed": 32, "pedestrians_injured": 759, "deaths_total": 54},
+    "2024": {"accidents": 33579, "pedestrian_collisions": 639, "pedestrians_killed": 38, "pedestrians_injured": 641, "deaths_total": 75},
+    "2025": {"accidents": 30708, "pedestrian_collisions": 670, "pedestrians_killed": 35, "pedestrians_injured": 686, "deaths_total": 64}
+  },
+  "derived": {
+    "nl_pedestrian_collisions_per_day_2025": 4.2,
+    "monterrey_pedestrian_collisions_per_day_2025": 1.8,
+    "monterrey_share_of_nl_accidents_2025": 0.43
+  },
+  "crossing_A": {
+    "id": "mty-garciaroel-ahuehuetes",
+    "point": [25.6537, -100.2878],
+    "georef_years": "2019–2024",
+    "within_30m": {"accidents": 16, "by_year": {"2019": 7, "2020": 0, "2021": 1, "2022": 2, "2023": 3, "2024": 3}, "pedestrian_collisions": 0, "types": {"vehicle": 14, "fixed_object": 2}},
+    "within_300m": {"accidents": 152, "pedestrian_collisions": 2, "pedestrian_collision_sites": ["García Roel y Junco de la Vega, 2023, ~193 m, 1 herido", "Junco de la Vega y Lirios, 2020, ~226 m, 1 herido"]},
+    "nearby_hotspot": {"site": "García Roel y Junco de la Vega", "distance_m": 190, "accidents_2019_2024": 104}
+  },
+  "ceu_2020_crossing_A": "INEGI Censo 2020, Características del Entorno Urbano (AGEB 1934, manzanas 018 y 022): on García Roel there is a pedestrian crossing, a pedestrian signal and a sidewalk, but no wheelchair ramp; on Ahuehuetes and Nogales there is a pedestrian crossing with no pedestrian signal and no ramp. Observed in Feb 2020; it records presence, not quality."
+}

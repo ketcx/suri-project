@@ -1,0 +1,124 @@
+{
+  "conflict_area": "CA-S-SBT",
+  "event_id": "E-2005",
+  "first": {
+    "cls": "car",
+    "t_exit_s": 135.8
+  },
+  "flags": {
+    "id_switch": null,
+    "impossible_speed": null,
+    "mask_jump": false,
+    "occlusion": false,
+    "outside_phase_logic": null,
+    "parked_or_static": false,
+    "paths_do_not_cross": true
+  },
+  "path_2hz_px": {
+    "first": [
+      [
+        134.2,
+        52,
+        1058
+      ],
+      [
+        134.7,
+        374,
+        1017
+      ],
+      [
+        135.2,
+        847,
+        921
+      ],
+      [
+        135.7,
+        1202,
+        843
+      ],
+      [
+        136.2,
+        1492,
+        778
+      ],
+      [
+        136.7,
+        1745,
+        746
+      ],
+      [
+        137.2,
+        1876,
+        693
+      ]
+    ],
+    "second": [
+      [
+        133.8,
+        534,
+        628
+      ],
+      [
+        134.3,
+        540,
+        628
+      ],
+      [
+        134.8,
+        558,
+        628
+      ],
+      [
+        135.3,
+        570,
+        632
+      ],
+      [
+        135.8,
+        596,
+        636
+      ],
+      [
+        136.3,
+        610,
+        639
+      ],
+      [
+        136.8,
+        638,
+        646
+      ],
+      [
+        137.3,
+        668,
+        653
+      ],
+      [
+        137.8,
+        696,
+        660
+      ],
+      [
+        138.3,
+        721,
+        663
+      ],
+      [
+        138.8,
+        746,
+        669
+      ]
+    ]
+  },
+  "pet_s": 1.0,
+  "second": {
+    "cls": "person",
+    "t_enter_s": 136.8
+  },
+  "tier": "close",
+  "units": "px (no metric calibration in this demo)",
+  "window_s": [
+    133.8,
+    138.8
+  ]
+}

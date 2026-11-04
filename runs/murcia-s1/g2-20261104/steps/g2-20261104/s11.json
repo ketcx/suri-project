@@ -1,0 +1,12 @@
+{
+  "actors": [
+    "motor vehicle",
+    "pedestrian"
+  ],
+  "confidence": "high",
+  "conflict_type": "through",
+  "dropped": [],
+  "false_positive": true,
+  "likely_cause": "peatón esperando en acera",
+  "model": "muse-spark-1.3"
+}

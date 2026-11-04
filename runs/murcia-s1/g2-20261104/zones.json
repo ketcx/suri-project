@@ -1,0 +1,5 @@
+{"crossing_id": "murcia-s1", "session_id": "g2-20261104",
+ "crosswalks": [{"id": "XW-S", "polygon_px": [[470, 628], [1770, 712], [1650, 815], [1200, 895], [360, 690]]}],
+ "gates": [],
+ "conflict_areas": [{"id": "CA-S-SBT", "crosswalk": "XW-S", "movement": "SB-thru",
+                     "polygon_px": [[640, 639], [1330, 684], [1240, 888], [560, 739]]}]}

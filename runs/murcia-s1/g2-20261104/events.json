@@ -1,0 +1,274 @@
+[
+  {
+    "chunk_id": "g2-20261104-c03",
+    "clip": "clips/E-2001.mp4",
+    "conflict_area": "CA-S-SBT",
+    "cycle_idx": 0,
+    "event_id": "E-2001",
+    "first": {
+      "cls": "person",
+      "movement": null,
+      "obj_id": "g2-20261104-c03b:person:3",
+      "speed_mps": null,
+      "t_exit_s": 103.7
+    },
+    "pet_s": 0.4,
+    "phase_at_conflict": null,
+    "second": {
+      "cls": "car",
+      "movement": null,
+      "obj_id": "g2-20261104-c03b:car:3",
+      "speed_mps": null,
+      "t_enter_s": 104.1
+    },
+    "session_id": "g2-20261104",
+    "status": "verified",
+    "tier": "serious",
+    "verify": {
+      "reason_codes": [],
+      "tool_calls": [
+        "g2-20261104/s02",
+        "g2-20261104/s09",
+        "g2-20261104/s17"
+      ]
+    },
+    "window_s": [
+      101.7,
+      106.1
+    ]
+  },
+  {
+    "chunk_id": "g2-20261104-c03",
+    "clip": "clips/E-2002.mp4",
+    "conflict_area": "CA-S-SBT",
+    "cycle_idx": 0,
+    "event_id": "E-2002",
+    "first": {
+      "cls": "person",
+      "movement": null,
+      "obj_id": "g2-20261104-c03b:person:2",
+      "speed_mps": null,
+      "t_exit_s": 104.7
+    },
+    "pet_s": 0.0,
+    "phase_at_conflict": null,
+    "second": {
+      "cls": "car",
+      "movement": null,
+      "obj_id": "g2-20261104-c03b:car:3",
+      "speed_mps": null,
+      "t_enter_s": 104.1
+    },
+    "session_id": "g2-20261104",
+    "status": "verified",
+    "tier": "serious",
+    "verify": {
+      "reason_codes": [],
+      "tool_calls": [
+        "g2-20261104/s03",
+        "g2-20261104/s10",
+        "g2-20261104/s18"
+      ]
+    },
+    "window_s": [
+      102.1,
+      106.7
+    ]
+  },
+  {
+    "chunk_id": "g2-20261104-c03",
+    "clip": "clips/E-2003.mp4",
+    "conflict_area": "CA-S-SBT",
+    "cycle_idx": 0,
+    "event_id": "E-2003",
+    "first": {
+      "cls": "person",
+      "movement": null,
+      "obj_id": "g2-20261104-c03b:person:2",
+      "speed_mps": null,
+      "t_exit_s": 104.7
+    },
+    "pet_s": 1.3,
+    "phase_at_conflict": null,
+    "second": {
+      "cls": "car",
+      "movement": null,
+      "obj_id": "g2-20261104-c03b:car:2",
+      "speed_mps": null,
+      "t_enter_s": 106.0
+    },
+    "session_id": "g2-20261104",
+    "status": "verified",
+    "tier": "close",
+    "verify": {
+      "reason_codes": [],
+      "tool_calls": [
+        "g2-20261104/s04",
+        "g2-20261104/s11",
+        "g2-20261104/s19"
+      ]
+    },
+    "window_s": [
+      102.7,
+      108.0
+    ]
+  },
+  {
+    "chunk_id": "g2-20261104-c04",
+    "clip": "clips/E-2004.mp4",
+    "conflict_area": "CA-S-SBT",
+    "cycle_idx": 0,
+    "event_id": "E-2004",
+    "first": {
+      "cls": "person",
+      "movement": null,
+      "obj_id": "g2-20261104-c04:person:6",
+      "speed_mps": null,
+      "t_exit_s": 143.5
+    },
+    "pet_s": 0.0,
+    "phase_at_conflict": null,
+    "second": {
+      "cls": "car",
+      "movement": null,
+      "obj_id": "g2-20261104-c04:car:6",
+      "speed_mps": null,
+      "t_enter_s": 135.6
+    },
+    "session_id": "g2-20261104",
+    "status": "rejected",
+    "tier": "serious",
+    "verify": {
+      "reason_codes": [
+        "paths_do_not_cross"
+      ],
+      "tool_calls": [
+        "g2-20261104/s05",
+        "g2-20261104/s12",
+        "g2-20261104/s20"
+      ]
+    },
+    "window_s": [
+      131.6,
+      139.6
+    ]
+  },
+  {
+    "chunk_id": "g2-20261104-c04",
+    "clip": "clips/E-2005.mp4",
+    "conflict_area": "CA-S-SBT",
+    "cycle_idx": 0,
+    "event_id": "E-2005",
+    "first": {
+      "cls": "car",
+      "movement": null,
+      "obj_id": "g2-20261104-c04:car:6",
+      "speed_mps": null,
+      "t_exit_s": 135.8
+    },
+    "pet_s": 1.0,
+    "phase_at_conflict": null,
+    "second": {
+      "cls": "person",
+      "movement": null,
+      "obj_id": "g2-20261104-c04:person:3",
+      "speed_mps": null,
+      "t_enter_s": 136.8
+    },
+    "session_id": "g2-20261104",
+    "status": "rejected",
+    "tier": "close",
+    "verify": {
+      "reason_codes": [
+        "paths_do_not_cross"
+      ],
+      "tool_calls": [
+        "g2-20261104/s06",
+        "g2-20261104/s13",
+        "g2-20261104/s21"
+      ]
+    },
+    "window_s": [
+      133.8,
+      138.8
+    ]
+  },
+  {
+    "chunk_id": "g2-20261104-c05",
+    "clip": "clips/E-2006.mp4",
+    "conflict_area": "CA-S-SBT",
+    "cycle_idx": 0,
+    "event_id": "E-2006",
+    "first": {
+      "cls": "person",
+      "movement": null,
+      "obj_id": "g2-20261104-c05:person:3",
+      "speed_mps": null,
+      "t_exit_s": 146.4
+    },
+    "pet_s": 0.2,
+    "phase_at_conflict": null,
+    "second": {
+      "cls": "car",
+      "movement": null,
+      "obj_id": "g2-20261104-c05:car:2",
+      "speed_mps": null,
+      "t_enter_s": 146.6
+    },
+    "session_id": "g2-20261104",
+    "status": "rejected",
+    "tier": "serious",
+    "verify": {
+      "reason_codes": [
+        "paths_do_not_cross"
+      ],
+      "tool_calls": [
+        "g2-20261104/s07",
+        "g2-20261104/s14",
+        "g2-20261104/s22"
+      ]
+    },
+    "window_s": [
+      145.5,
+      149.7
+    ]
+  },
+  {
+    "chunk_id": "g2-20261104-c05",
+    "clip": "clips/E-2007.mp4",
+    "conflict_area": "CA-S-SBT",
+    "cycle_idx": 0,
+    "event_id": "E-2007",
+    "first": {
+      "cls": "person",
+      "movement": null,
+      "obj_id": "g2-20261104-c05:person:1",
+      "speed_mps": null,
+      "t_exit_s": 148.9
+    },
+    "pet_s": 0.0,
+    "phase_at_conflict": null,
+    "second": {
+      "cls": "car",
+      "movement": null,
+      "obj_id": "g2-20261104-c05:car:2",
+      "speed_mps": null,
+      "t_enter_s": 146.6
+    },
+    "session_id": "g2-20261104",
+    "status": "verified",
+    "tier": "serious",
+    "verify": {
+      "reason_codes": [],
+      "tool_calls": [
+        "g2-20261104/s08",
+        "g2-20261104/s15",
+        "g2-20261104/s23"
+      ]
+    },
+    "window_s": [
+      145.5,
+      151.8
+    ]
+  }
+]

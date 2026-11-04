@@ -31,7 +31,11 @@ import math
 import os
 import sys
 import tempfile
+import threading
 from datetime import datetime, timezone
+
+# ponytail: one process-wide lock. Split per ledger path if two ledgers run at once.
+_LEDGER_LOCK = threading.Lock()
 
 PRICES = {
     # Per 1,000 frames, min 50 billed per request.
@@ -162,13 +166,14 @@ def spent_usd(model: str) -> float:
 
 def _append_row(row: dict) -> None:
     path = _ledger_path()
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    fresh = not os.path.exists(path)
-    with open(path, "a", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=LEDGER_COLUMNS)
-        if fresh:
-            writer.writeheader()
-        writer.writerow({c: row.get(c, "") for c in LEDGER_COLUMNS})
+    with _LEDGER_LOCK:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        fresh = not os.path.exists(path)
+        with open(path, "a", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=LEDGER_COLUMNS)
+            if fresh:
+                writer.writeheader()
+            writer.writerow({c: row.get(c, "") for c in LEDGER_COLUMNS})
 
 
 def _entry_path(request_h: str) -> str:
@@ -184,21 +189,22 @@ def _read_entry(path: str) -> list[dict]:
 
 
 def _write_entry(path: str, request: dict, events: list[dict]) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
-    os.close(fd)
-    try:
-        with gzip.open(tmp, "wt") as fh:
-            fh.write(json.dumps({"request": request}) + "\n")
-            for event in events:
-                fh.write(json.dumps(event) + "\n")
-        os.replace(tmp, path)
-    except BaseException:
+    with _LEDGER_LOCK:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        os.close(fd)
         try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+            with gzip.open(tmp, "wt") as fh:
+                fh.write(json.dumps({"request": request}) + "\n")
+                for event in events:
+                    fh.write(json.dumps(event) + "\n")
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
 
 def _extract_usage(last: dict) -> dict:
