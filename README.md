@@ -32,7 +32,7 @@ The input is the roadside-camera video of scenario 1 of the Universidad de Murci
 | Muse Wonder verification | 2 tool-calling turns: `kinematics` ×7 and `explain` ×7 in parallel, then `submit_verdict` ×7; every verdict passed the code re-check |
 | Verdicts | **4 verified** (3 serious, 1 close) and **3 rejected** (`paths_do_not_cross`: the two paths never came within the threshold inside the event window) |
 | Muse Spark causes | 6 of 7 clips explained, for example "no cede el paso" (the car does not yield) and "peatón esperando" (pedestrian waiting); one call timed out after 3 attempts, so that verdict rests on the code flags |
-| Cost | USD 2.80 for all 126 API calls made while building, including tests and re-runs; USD 0.59 per minute of footage (`runs/murcia-s1/metrics.json`). The final live verification run cost USD 0.17 |
+| Cost | USD 2.80 for all 126 API calls made while building, including tests and re-runs; USD 0.59 per minute of footage (`runs/murcia-s1/metrics.json`). The final live verification run cost USD 0.45 by the ledger (23 calls between its first and last step, 14 of them Muse Spark attempts that timed out and are counted at the USD 0.02 estimate, so this is an upper bound). Its trace and `findings.json` show USD 0.17 because that run was recorded before `verify_live.py` counted failed attempts |
 
 **What we tried first.** We also ran the same scenario's drone video. From that height SAM 3.1 saw the cars but not the pedestrians, so it produced no PET pairs; its tracks are kept in `runs/murcia-s1/g1-20261104/`. A fixed roadside camera, which is Suri's design, worked.
 
@@ -79,11 +79,11 @@ To reproduce the demo from cache (needs the raw clip in `raw/murcia/`; it is not
 
 ```bash
 export SURI_CACHE_DIR=runs/murcia-s1/cache/api
-python3 src/kinematics.py runs/murcia-s1/g2-20261104
-python3 src/clips.py runs/murcia-s1/g2-20261104
-python3 src/verify_live.py runs/murcia-s1/g2-20261104 --task T-202
-python3 src/agent.py write runs/murcia-s1/g2-20261104
-python3 src/report.py runs/murcia-s1/g2-20261104
+.venv/bin/python src/kinematics.py runs/murcia-s1/g2-20261104
+.venv/bin/python src/clips.py runs/murcia-s1/g2-20261104
+.venv/bin/python src/verify_live.py runs/murcia-s1/g2-20261104 --task T-202
+.venv/bin/python src/agent.py write runs/murcia-s1/g2-20261104
+.venv/bin/python src/report.py runs/murcia-s1/g2-20261104
 ```
 
 ## Limitations (honest)

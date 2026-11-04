@@ -11,6 +11,7 @@ real time, or crash reduction.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import sys
@@ -101,22 +102,24 @@ def render_html(data, resolved, clip_prefix="clips"):
     atus = data["atus"]
     cross = atus["crossing_A"]["within_30m"]
     banner = REPLAY_BANNER if findings["run"].get("fallbacks") else ""
+    esc = lambda v: html.escape(str(v), quote=True)      # model and data text is never markup
     rows = []
     for event in session["events"]:
-        codes = ", ".join(event["verify"]["reason_codes"]) or "—"
+        codes = esc(", ".join(event["verify"]["reason_codes"]) or "—")
+        eid = esc(event["event_id"])
         rows.append(
-            f"<tr><td>{event['event_id']}</td>"
-            f"<td>{event['pet_s']:.1f}</td><td>{event['tier']}</td>"
-            f"<td>{event['status']}</td><td>{codes}</td>"
-            f"<td><img src=\"{clip_prefix}/{event['event_id']}.jpg\" "
-            f"alt=\"keyframe {event['event_id']}\" width=\"320\"></td></tr>")
+            f"<tr><td>{eid}</td>"
+            f"<td>{event['pet_s']:.1f}</td><td>{esc(event['tier'])}</td>"
+            f"<td>{esc(event['status'])}</td><td>{codes}</td>"
+            f"<td><img src=\"{esc(clip_prefix)}/{eid}.jpg\" "
+            f"alt=\"keyframe {eid}\" width=\"320\"></td></tr>")
     agent_paras = "\n".join(
-        f"<p><strong>{fid}</strong>: {text}</p>"
-        f"<p>Tipos: {', '.join(cluster['conflict_types']) or '—'}; "
-        f"causas señaladas: {'; '.join(cluster['causes']) or '—'}.</p>"
+        f"<p><strong>{esc(fid)}</strong>: {esc(text)}</p>"
+        f"<p>Tipos: {esc(', '.join(cluster['conflict_types']) or '—')}; "
+        f"causas señaladas: {esc('; '.join(cluster['causes']) or '—')}.</p>"
         for (fid, text), cluster in zip(resolved["texts"],
                                         resolved["clusters"]))
-    rec_paras = "\n".join(f"<p><strong>{rid}</strong>: {text}</p>"
+    rec_paras = "\n".join(f"<p><strong>{esc(rid)}</strong>: {esc(text)}</p>"
                           for rid, text in resolved["recs"])
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -138,7 +141,7 @@ siguiente paso: todavía no se ha grabado.</p>
 </section>
 <section>
 <h2>Resultados de la demostración: video abierto de la Universidad de Murcia (España), no de Monterrey</h2>
-<p>{resolved['summary']}</p>
+<p>{esc(resolved['summary'])}</p>
 <table>
 <tr><th>evento</th><th>PET (s)</th><th>nivel</th><th>veredicto</th>
 <th>códigos</th><th>keyframe difuminado</th></tr>
@@ -160,7 +163,7 @@ Zenodo. https://zenodo.org/records/18375218. Licencia CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/). Escenario 1, cámara RSU
 (RSU_1_no_fall.MOV). Cambios: recorte a 10 fps, personas y placas
 difuminadas, cajas y zonas superpuestas por Suri.</li>
-<li>{atus['attribution']}.</li>
+<li>{esc(atus['attribution'])}.</li>
 <li>Modelos: SAM 3.1 para segmentación; Muse Wonder para verificar cada
 candidato con herramientas (nunca ve video); Muse Spark para explicar el clip
 difuminado. Llamadas y costos en el ledger del proyecto.</li>
@@ -225,6 +228,8 @@ def run_check():
           "Repetición sin modelos en vivo" in render_html(replayed,
                                                           resolve(replayed)))
     check("causes line", "Tipos:" in html and "causas señaladas" in html)
+    evil = dict(resolved, summary="<script>alert(1)</script>")
+    check("escaped", "<script>" not in render_html(data, evil))
     if failures:
         print(f"FAILURES: {failures}")
         return 1

@@ -47,6 +47,8 @@ MAX_TOOL_CALLS = 40
 EST_TURN_USD = 0.02
 EST_EXPLAIN_USD = 0.02
 EXPLAIN_SLOTS = threading.Semaphore(2)   # 7 parallel video calls hung the API on 2026-11-04
+# ponytail: ledger caps are checked before a send and recorded after it, so with EXPLAIN_SLOTS calls in flight a
+# cap can be passed by at most EXPLAIN_SLOTS x EST_EXPLAIN_USD; add reservations in ledger.call if caps get tight.
 EXPLAIN_TIMEOUT_S, EXPLAIN_ATTEMPTS = 90, 3
 CACHE_READS = True                        # --fresh sets False: every call goes to the API
 
@@ -274,7 +276,10 @@ def clip_tag_ok(path):
     d = json.loads(out)
     tag = (d.get("format", {}).get("tags") or {}).get("comment")
     h = max((s.get("height") or 0) for s in d.get("streams", [{}]))
-    return tag == "blurred-v1" and h <= 720
+    if tag != "blurred-v1" or h > 720:
+        return False
+    import clips                                   # same audit as publishing: no audio, no stray metadata
+    return not clips.audit_file(path)
 
 
 def sha256_file(path):
@@ -328,10 +333,11 @@ def explain(event, crossing_dir, task_id):
         return [e.model_dump() for e in s]
 
     t = time.time()
-    resp, detail = None, "no valid JSON"
+    resp, detail, tried = None, "no valid JSON", []
     cached = [a for a in range(EXPLAIN_ATTEMPTS) if CACHE_READS and os.path.exists(ledger._entry_path(
         ledger.request_hash(ENDPOINT, dict(key_body, attempt=a, model=EXPLAIN_MODEL))))]
     for attempt in cached + [a for a in range(EXPLAIN_ATTEMPTS) if a not in cached]:   # replay first
+        tried.append(ledger.request_hash(ENDPOINT, dict(key_body, attempt=attempt, model=EXPLAIN_MODEL)))
         try:
             with EXPLAIN_SLOTS:
                 events = list(ledger.call(task_id, EXPLAIN_MODEL, ENDPOINT, dict(key_body, attempt=attempt), send,
@@ -343,9 +349,8 @@ def explain(event, crossing_dir, task_id):
         res = clean_explain(response_text(resp))
         if res is not None:
             res["model"] = EXPLAIN_MODEL
-            used = ledger.request_hash(ENDPOINT, dict(key_body, attempt=attempt, model=EXPLAIN_MODEL))
-            return res, resp, int((time.time() - t) * 1000), used
-    return {"error": "explain_unavailable", "detail": detail}, resp, int((time.time() - t) * 1000), None
+            return res, resp, int((time.time() - t) * 1000), tried
+    return {"error": "explain_unavailable", "detail": detail}, resp, int((time.time() - t) * 1000), tried
 
 
 # ---------------------------------------------------------------- trace
@@ -417,6 +422,7 @@ def run(run_dir, task_id):
                                "second_cls": e["second"]["cls"]} for e in cands]}
     history = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": json.dumps(payload)}]}]
     model, fallback, calls, failures, ok_turns = AGENT_MODEL, None, 0, 0, 0
+    run_started = datetime.datetime.now(datetime.timezone.utc)
 
     for turn in range(1, MAX_TURNS + 1):
         body = {"model": model, "instructions": SYSTEM, "input": history, "tools": TOOLS, "tool_choice": "auto"}
@@ -466,9 +472,9 @@ def run(run_dir, task_id):
                 kin[eid] = res
                 return fc, name, args, res, None, int((time.time() - t1) * 1000), None
             if name == "explain" and eid in by_id:
-                res, resp, ms, used = explain(by_id[eid], crossing_dir, task_id)
+                res, resp, ms, tried = explain(by_id[eid], crossing_dir, task_id)
                 expl[eid] = res
-                return fc, name, args, res, (resp, used), ms, EXPLAIN_MODEL
+                return fc, name, args, res, (resp, tried), ms, EXPLAIN_MODEL
             if name == "submit_verdict":
                 res = check_submit(args, by_id, kin, expl)
                 if res.get("ok"):
@@ -485,11 +491,13 @@ def run(run_dir, task_id):
         calls += len(chosen)
         for fc, name, args, res, resp, ms, m in results:
             cost, hit = 0.0, False
-            if name == "explain":
-                resp, used = resp
-                rows = [r for r in ledger_tail() if used and r.get("request_hash") == used]
-                if rows:                               # the ledger row of the attempt that answered
-                    cost, hit = float(rows[-1].get("cost_usd") or 0), rows[-1].get("cache_hit") == "1"
+            if name == "explain" and isinstance(resp, tuple):
+                resp, tried = resp
+                # every ledger row of every attempt of this explain, in this run (failed attempts bill an estimate)
+                led = [r for r in ledger_tail() if r.get("request_hash") in tried
+                       and datetime.datetime.fromisoformat(r["ts"]) >= run_started]
+                cost = round(sum(float(r.get("cost_usd") or 0) for r in led), 6)
+                hit = bool(led) and all(r.get("cache_hit") == "1" for r in led)
             tokens = usage(resp) if resp else (None, None)
             targs = dict(args, clip_id=args.get("event_id")) if name == "explain" else args   # spec 06 key
             sid = trace.step(m, "submit" if name == "submit_verdict" else name, targs, res, ms, tokens,

@@ -232,9 +232,10 @@ def intervals_of(segment, obj_id, cls, area, poly, edge_first, edge_last):
         j = i
         while j + 1 < n and states[j + 1]:
             j += 1
-        while not inside[j]:
-            j -= 1
-        enter_idx, exit_idx = i, j
+        exit_idx = j                       # trim the exit, but keep j at the run end so i always advances
+        while exit_idx > i and not inside[exit_idx]:
+            exit_idx -= 1
+        enter_idx = i
         enter_type = "cut" if edge_first else "track"
         if i > 0:
             enter_type = "ok"
@@ -473,6 +474,17 @@ def _mk_zones():
 
 def check():
     """Synthetic scenes in pixels: PET 1.5 both orders, no-conflict + parked."""
+    import threading
+    seg3 = [{"x": 0.5, "y": 0.5, "t_s": k / 10, "frame": k} for k in range(2)] + \
+           [{"x": 9.0, "y": 9.0, "t_s": 0.2, "frame": 2}]
+    box = [[0, 0], [1, 0], [1, 1], [0, 1]]
+    done = []
+    worker = threading.Thread(target=lambda: done.append(
+        intervals_of(seg3, "p:1", "person", "CA", box, False, False)), daemon=True)
+    worker.start()
+    worker.join(2.0)
+    assert done, "intervals_of did not terminate on inside, inside, outside"
+
     zones = _mk_zones()
     session, chunk = "g1-20261104", "c00"
     one = [_chunk(chunk, 0.0, 12.0)]

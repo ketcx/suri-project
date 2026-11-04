@@ -740,7 +740,7 @@ def build_findings(clusters, cf_doc, run_ctx, sessions):
         summary_en += (" In the mechanical scenario, the candidate serious "
                        "conflicts would be {{counterfactual.baseline.serious}}.")
     run_ctx = dict(run_ctx, n_recommendations=len(recommendations))
-    return {"crossing_id": CROSSING_ID, "sessions": sessions,
+    return {"crossing_id": run_ctx.get("crossing_id") or CROSSING_ID, "sessions": sessions,
             "run": run_ctx, "summary": {"es": summary_es, "en": summary_en},
             "findings": findings, "recommendations": recommendations,
             "references": REFERENCES}
@@ -1161,6 +1161,19 @@ def _read_explains(run_dir):
     return out
 
 
+def _step_model(run_dir, tool):
+    """Model of the first step of ``tool`` in the session trace, or None."""
+    path = os.path.join(run_dir, "trace.jsonl")
+    if not os.path.exists(path):
+        return None
+    with open(path) as fh:
+        for line in fh:
+            step = json.loads(line) if line.strip() else {}
+            if step.get("tool") == tool and step.get("model"):
+                return step["model"]
+    return None
+
+
 def _agent_model(run_dir):
     """Model of the first agent turn in the session trace, or None."""
     path = os.path.join(run_dir, "trace.jsonl")
@@ -1261,7 +1274,8 @@ def run_write(run_dir, task_id="T-WRITE", replay=False):
     run_ctx = {
         "mode": "replay" if replay else "batch",
         "agent_model": _agent_model(run_dir),
-        "explain_model": EXPLAIN_MODEL,
+        "explain_model": _step_model(run_dir, "explain") or EXPLAIN_MODEL,
+        "crossing_id": os.path.basename(os.path.normpath(crossing)),
         "fallbacks": ["no es en vivo"] if replay else [],
         "hours_observed": hours, "n_candidates": len(session["events"]),
         "n_verified": len(verified),
@@ -1287,9 +1301,12 @@ def run_write(run_dir, task_id="T-WRITE", replay=False):
     with open(os.path.join(crossing, "findings.json"), "w") as fh:
         json.dump(doc, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
+    session_name = os.path.basename(os.path.normpath(run_dir))
     with open(os.path.join(crossing, "trace.jsonl"), "w") as fh:
         for step in scope.steps:
-            fh.write(json.dumps(step, ensure_ascii=False) + "\n")
+            # result_ref is relative to this crossing-level file: the step files live in the session folder.
+            out = dict(step, result_ref=f"{session_name}/{step['result_ref']}") if step.get("result_ref") else step
+            fh.write(json.dumps(out, ensure_ascii=False) + "\n")
     return {"counterfactual": os.path.join(crossing, "counterfactual.json"),
             "findings": os.path.join(crossing, "findings.json"),
             "trace": os.path.join(crossing, "trace.jsonl"),
@@ -1521,7 +1538,7 @@ def run_check():
     with open(os.path.join(tmp, "findings.json")) as fh:
         doc = json.load(fh)
     check("findings shape",
-          doc["crossing_id"] == "mty-garciaroel-ahuehuetes"
+          doc["crossing_id"] == os.path.basename(tmp)          # from the run folder, not a constant
           and doc["sessions"] == ["s-check"]
           and doc["run"]["mode"] == "replay"
           and doc["run"]["fallbacks"] == ["no es en vivo"]

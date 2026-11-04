@@ -56,11 +56,21 @@ def compute(crossing_dir, ledger_path):
                       if os.path.isdir(os.path.join(crossing_dir, name))
                       and os.path.exists(
                           os.path.join(crossing_dir, name, "events.json")))
-    events = [e for name in sessions
+    # Exposure for rates = the sessions the findings cover (a capture where SAM could not see pedestrians,
+    # like the drone test, is footage processed but not time observed). Cost per minute uses all footage.
+    findings_path = os.path.join(crossing_dir, "findings.json")
+    observed = sessions
+    if os.path.exists(findings_path):
+        with open(findings_path) as fh:
+            covered = json.load(fh).get("sessions") or []
+        observed = [name for name in sessions if name in covered] or sessions
+    events = [e for name in observed
               for e in _read_events(os.path.join(crossing_dir, name))]
-    chunks = [c for name in sessions
-              for c in _read_chunks(os.path.join(crossing_dir, name))]
-    hours = agent._union_hours(chunks)
+    session_chunks = {name: _read_chunks(os.path.join(crossing_dir, name))
+                      for name in sessions}
+    chunks = [c for group in session_chunks.values() for c in group]
+    # Chunk times are session-relative: union overlaps within a session, then sum sessions.
+    hours = round(sum(agent._union_hours(session_chunks[name]) for name in observed), 3)
     footage_min = sum(agent._chunk_end(c) - float(c["t0_s"]) for c in chunks)
     footage_min = round(footage_min / 60.0, 3)
     verified = [e for e in events if e.get("status") == "verified"]
@@ -122,6 +132,23 @@ def run_check():
 
     doc = compute("fixtures/metrics/crossing", "fixtures/metrics/ledger.csv")
     check("hours union", doc["hours_observed"] == 0.014)
+    import shutil
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="metrics-check-")
+    try:
+        crossing = os.path.join(tmp, "crossing")
+        shutil.copytree("fixtures/metrics/crossing", crossing)
+        sessions = sorted(n for n in os.listdir(crossing) if os.path.isdir(os.path.join(crossing, n)))
+        extra = os.path.join(crossing, "zz-unobserved")      # footage processed, not covered by findings
+        shutil.copytree(os.path.join(crossing, sessions[0]), extra)
+        with open(os.path.join(crossing, "findings.json"), "w") as fh:
+            json.dump({"sessions": sessions}, fh)
+        two = compute(crossing, "fixtures/metrics/ledger.csv")
+        check("rates use findings sessions",
+              two["hours_observed"] == doc["hours_observed"]
+              and two["h6"]["footage_min"] > doc["h6"]["footage_min"])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     check("serious rate", doc["serious"] == {
         "rate_per_h": 142.9, "rate_per_h_lo": 0.0,
         "rate_per_h_hi": 340.8, "n": 2})
