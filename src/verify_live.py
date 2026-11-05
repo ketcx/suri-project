@@ -381,6 +381,25 @@ class Trace:
                 fh.write(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n")
 
 
+def attribute(rows, tried, task_id, started, claimed):
+    """Cost and cache flag of one explain call from ledger rows.
+
+    Counts every row of every attempt it tried (failed attempts bill an estimate; ledger.call may add a retry row
+    under the same hash), only for this task and this run, and each row once: ``claimed`` holds the indices
+    already given to earlier explain calls.
+    """
+    led = []
+    for k, r in enumerate(rows):
+        if k in claimed or r.get("request_hash") not in tried or r.get("task_id") != task_id:
+            continue
+        if datetime.datetime.fromisoformat(r["ts"]) < started:
+            continue
+        claimed.add(k)
+        led.append(r)
+    cost = round(sum(float(r.get("cost_usd") or 0) for r in led), 6)
+    return cost, bool(led) and all(r.get("cache_hit") == "1" for r in led)
+
+
 def tool_args(fc):
     """Arguments of one function call; malformed JSON becomes {} (the tool then answers with an error)."""
     try:
@@ -494,17 +513,7 @@ def run(run_dir, task_id):
             cost, hit = 0.0, False
             if name == "explain" and isinstance(resp, tuple):
                 resp, tried = resp
-                tried = tried or []                        # clip missing or failed the audit: nothing was sent
-                # every ledger row of every attempt of this explain, in this run (failed attempts bill an estimate);
-                # a row already attributed to an earlier explain call is never counted twice
-                led = []
-                for k, r in enumerate(ledger_tail()):
-                    if k not in claimed and r.get("request_hash") in tried \
-                            and datetime.datetime.fromisoformat(r["ts"]) >= run_started:
-                        claimed.add(k)
-                        led.append(r)
-                cost = round(sum(float(r.get("cost_usd") or 0) for r in led), 6)
-                hit = bool(led) and all(r.get("cache_hit") == "1" for r in led)
+                cost, hit = attribute(ledger_tail(), tried or [], task_id, run_started, claimed)
             tokens = usage(resp) if resp else (None, None)
             targs = dict(args, clip_id=args.get("event_id")) if name == "explain" else args   # spec 06 key
             sid = trace.step(m, "submit" if name == "submit_verdict" else name, targs, res, ms, tokens,
@@ -599,6 +608,22 @@ def check():
     assert clean_explain("no json here") is None
     assert clean_explain('{"conflict_type": "through"}') is None
     assert tool_args({"arguments": "{not json"}) == {} and tool_args({"arguments": '{"event_id": "E-1"}'}) == {"event_id": "E-1"}
+    # explain cost attribution, from a recorded-shape ledger fixture
+    fx = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fixtures", "verify_live",
+                      "ledger_attribution.csv")
+    with open(fx, newline="") as fh:
+        led = list(csv.DictReader(fh))
+    started = datetime.datetime.fromisoformat("2026-11-04T14:00:00-06:00")
+    claimed = set()
+    # failed attempt then success; the 10:00 historical row and the other task's row are not this call's
+    assert attribute(led[:9], ["hA0", "hA1"], "T-202", started, claimed) == (0.0313, False)
+    # retries exhausted, including ledger.call's internal retry row under the same hash
+    assert attribute(led[:9], ["hB0", "hB1", "hB2"], "T-202", started, claimed) == (0.08, False)
+    # cache hit
+    assert attribute(led[:9], ["hC0"], "T-202", started, claimed) == (0.0, True)
+    # the same event explained again later: only its new replay row, earlier rows are not counted twice
+    assert attribute(led, ["hA1"], "T-202", started, claimed) == (0.0, True)
+    assert attribute(led, ["hA1"], "T-202", started, claimed) == (0.0, False)     # nothing left to claim
     print("verify_live --check: PASS (flags, verdict table, submit re-check, explain parsing)")
 
 
