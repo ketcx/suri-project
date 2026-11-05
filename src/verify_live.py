@@ -47,6 +47,8 @@ MAX_TOOL_CALLS = 40
 EST_TURN_USD = 0.02
 EST_EXPLAIN_USD = 0.02
 EXPLAIN_SLOTS = threading.Semaphore(2)   # 7 parallel video calls hung the API on 2026-11-04
+# ponytail: ledger caps are checked before a send and recorded after it, so with EXPLAIN_SLOTS calls in flight a
+# cap can be passed by at most EXPLAIN_SLOTS x EST_EXPLAIN_USD; add reservations in ledger.call if caps get tight.
 EXPLAIN_TIMEOUT_S, EXPLAIN_ATTEMPTS = 90, 3
 CACHE_READS = True                        # --fresh sets False: every call goes to the API
 
@@ -274,7 +276,10 @@ def clip_tag_ok(path):
     d = json.loads(out)
     tag = (d.get("format", {}).get("tags") or {}).get("comment")
     h = max((s.get("height") or 0) for s in d.get("streams", [{}]))
-    return tag == "blurred-v1" and h <= 720
+    if tag != "blurred-v1" or h > 720:
+        return False
+    import clips                                   # same audit as publishing: no audio, no stray metadata
+    return not clips.audit_file(path)
 
 
 def sha256_file(path):
@@ -328,10 +333,11 @@ def explain(event, crossing_dir, task_id):
         return [e.model_dump() for e in s]
 
     t = time.time()
-    resp, detail = None, "no valid JSON"
+    resp, detail, tried = None, "no valid JSON", []
     cached = [a for a in range(EXPLAIN_ATTEMPTS) if CACHE_READS and os.path.exists(ledger._entry_path(
         ledger.request_hash(ENDPOINT, dict(key_body, attempt=a, model=EXPLAIN_MODEL))))]
     for attempt in cached + [a for a in range(EXPLAIN_ATTEMPTS) if a not in cached]:   # replay first
+        tried.append(ledger.request_hash(ENDPOINT, dict(key_body, attempt=attempt, model=EXPLAIN_MODEL)))
         try:
             with EXPLAIN_SLOTS:
                 events = list(ledger.call(task_id, EXPLAIN_MODEL, ENDPOINT, dict(key_body, attempt=attempt), send,
@@ -343,9 +349,8 @@ def explain(event, crossing_dir, task_id):
         res = clean_explain(response_text(resp))
         if res is not None:
             res["model"] = EXPLAIN_MODEL
-            used = ledger.request_hash(ENDPOINT, dict(key_body, attempt=attempt, model=EXPLAIN_MODEL))
-            return res, resp, int((time.time() - t) * 1000), used
-    return {"error": "explain_unavailable", "detail": detail}, resp, int((time.time() - t) * 1000), None
+            return res, resp, int((time.time() - t) * 1000), tried
+    return {"error": "explain_unavailable", "detail": detail}, resp, int((time.time() - t) * 1000), tried
 
 
 # ---------------------------------------------------------------- trace
@@ -374,6 +379,25 @@ class Trace:
         with open(os.path.join(self.run_dir, "trace.jsonl"), "w") as fh:
             for r in self.rows:
                 fh.write(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n")
+
+
+def attribute(rows, tried, task_id, started, claimed):
+    """Cost and cache flag of one explain call from ledger rows.
+
+    Counts every row of every attempt it tried (failed attempts bill an estimate; ledger.call may add a retry row
+    under the same hash), only for this task and this run, and each row once: ``claimed`` holds the indices
+    already given to earlier explain calls.
+    """
+    led = []
+    for k, r in enumerate(rows):
+        if k in claimed or r.get("request_hash") not in tried or r.get("task_id") != task_id:
+            continue
+        if datetime.datetime.fromisoformat(r["ts"]) < started:
+            continue
+        claimed.add(k)
+        led.append(r)
+    cost = round(sum(float(r.get("cost_usd") or 0) for r in led), 6)
+    return cost, bool(led) and all(r.get("cache_hit") == "1" for r in led)
 
 
 def tool_args(fc):
@@ -417,6 +441,8 @@ def run(run_dir, task_id):
                                "second_cls": e["second"]["cls"]} for e in cands]}
     history = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": json.dumps(payload)}]}]
     model, fallback, calls, failures, ok_turns = AGENT_MODEL, None, 0, 0, 0
+    run_started = datetime.datetime.now(datetime.timezone.utc)
+    claimed = set()                                # ledger row indices already attributed to a trace step
 
     for turn in range(1, MAX_TURNS + 1):
         body = {"model": model, "instructions": SYSTEM, "input": history, "tools": TOOLS, "tool_choice": "auto"}
@@ -466,9 +492,9 @@ def run(run_dir, task_id):
                 kin[eid] = res
                 return fc, name, args, res, None, int((time.time() - t1) * 1000), None
             if name == "explain" and eid in by_id:
-                res, resp, ms, used = explain(by_id[eid], crossing_dir, task_id)
+                res, resp, ms, tried = explain(by_id[eid], crossing_dir, task_id)
                 expl[eid] = res
-                return fc, name, args, res, (resp, used), ms, EXPLAIN_MODEL
+                return fc, name, args, res, (resp, tried), ms, EXPLAIN_MODEL
             if name == "submit_verdict":
                 res = check_submit(args, by_id, kin, expl)
                 if res.get("ok"):
@@ -485,11 +511,9 @@ def run(run_dir, task_id):
         calls += len(chosen)
         for fc, name, args, res, resp, ms, m in results:
             cost, hit = 0.0, False
-            if name == "explain":
-                resp, used = resp
-                rows = [r for r in ledger_tail() if used and r.get("request_hash") == used]
-                if rows:                               # the ledger row of the attempt that answered
-                    cost, hit = float(rows[-1].get("cost_usd") or 0), rows[-1].get("cache_hit") == "1"
+            if name == "explain" and isinstance(resp, tuple):
+                resp, tried = resp
+                cost, hit = attribute(ledger_tail(), tried or [], task_id, run_started, claimed)
             tokens = usage(resp) if resp else (None, None)
             targs = dict(args, clip_id=args.get("event_id")) if name == "explain" else args   # spec 06 key
             sid = trace.step(m, "submit" if name == "submit_verdict" else name, targs, res, ms, tokens,
@@ -584,6 +608,22 @@ def check():
     assert clean_explain("no json here") is None
     assert clean_explain('{"conflict_type": "through"}') is None
     assert tool_args({"arguments": "{not json"}) == {} and tool_args({"arguments": '{"event_id": "E-1"}'}) == {"event_id": "E-1"}
+    # explain cost attribution, from a recorded-shape ledger fixture
+    fx = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fixtures", "verify_live",
+                      "ledger_attribution.csv")
+    with open(fx, newline="") as fh:
+        led = list(csv.DictReader(fh))
+    started = datetime.datetime.fromisoformat("2026-11-04T14:00:00-06:00")
+    claimed = set()
+    # failed attempt then success; the 10:00 historical row and the other task's row are not this call's
+    assert attribute(led[:9], ["hA0", "hA1"], "T-202", started, claimed) == (0.0313, False)
+    # retries exhausted, including ledger.call's internal retry row under the same hash
+    assert attribute(led[:9], ["hB0", "hB1", "hB2"], "T-202", started, claimed) == (0.08, False)
+    # cache hit
+    assert attribute(led[:9], ["hC0"], "T-202", started, claimed) == (0.0, True)
+    # the same event explained again later: only its new replay row, earlier rows are not counted twice
+    assert attribute(led, ["hA1"], "T-202", started, claimed) == (0.0, True)
+    assert attribute(led, ["hA1"], "T-202", started, claimed) == (0.0, False)     # nothing left to claim
     print("verify_live --check: PASS (flags, verdict table, submit re-check, explain parsing)")
 
 

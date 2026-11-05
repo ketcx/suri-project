@@ -330,6 +330,33 @@ def downscale720(img):
                       interpolation=cv2.INTER_AREA)
 
 
+MAX_GAP_S = 1.0     # tracking gaps up to this are interpolated for blur, so a missed detection stays blurred
+HOLD_S = 0.2        # first/last box held this long past a track's ends
+
+
+def cover(by_obj, t):
+    """Boxes to blur at time t: observed, interpolated over a gap <= MAX_GAP_S, or held <= HOLD_S past a track end.
+
+    Privacy first: a box held or interpolated a little too long only over-blurs.
+    """
+    out = []
+    for obj_rows in by_obj.values():
+        if not obj_rows[0]["_t"] - HOLD_S - 1e-9 <= t <= obj_rows[-1]["_t"] + HOLD_S + 1e-9:
+            continue
+        near = min(obj_rows, key=lambda r: abs(r["_t"] - t))
+        if abs(near["_t"] - t) <= 0.5 / FPS + 1e-9 or t < obj_rows[0]["_t"] or t > obj_rows[-1]["_t"]:
+            out.append(near)
+            continue
+        after = next(r for r in obj_rows if r["_t"] > t)
+        before = max((r for r in obj_rows if r["_t"] < t), key=lambda r: r["_t"])
+        if after["_t"] - before["_t"] > MAX_GAP_S + 1e-9:
+            continue
+        w = (t - before["_t"]) / (after["_t"] - before["_t"])
+        box = {k: float(before[k]) + w * (float(after[k]) - float(before[k])) for k in ("x1", "y1", "x2", "y2")}
+        out.append(dict(before, **box, _t=t))
+    return out
+
+
 def render_event(event, tracks, zones, run_dir, out_dir):
     """Blur, overlay, encode one event; returns (mp4, jpg, stats)."""
     import cv2
@@ -349,9 +376,13 @@ def render_event(event, tracks, zones, run_dir, out_dir):
     shape = frames[0].shape[:2]
     rendered = []
     persons_blurred = 0
+    by_obj = {}
+    for r in sorted(rows, key=lambda r: r["_t"]):
+        by_obj.setdefault(r["obj_id"], []).append(r)
     for img, t in zip(frames, times):
         here = [r for r in rows if abs(r["_t"] - t) <= 0.5 / FPS + 1e-9]
-        persons = [r for r in here if r["cls"] == "person"]
+        covered = cover(by_obj, t)                 # blur also spans short tracking gaps
+        persons = [r for r in covered if r["cls"] == "person"]
         persons_blurred += len(persons)
         masks = [box_mask(shape, float(r["x1"]), float(r["y1"]),
                           float(r["x2"]), float(r["y2"])) for r in persons]
@@ -359,7 +390,7 @@ def render_event(event, tracks, zones, run_dir, out_dir):
         # blur (a high-mounted SUV plate), so every car box is blurred whole.
         plates = [box_mask(shape, float(r["x1"]), float(r["y1"]),
                            float(r["x2"]), float(r["y2"]))
-                  for r in here if r["cls"] == "car"]
+                  for r in covered if r["cls"] == "car"]
         out = blur_frame(img, masks, plates)
         first = [r for r in here if r["obj_id"] == first_id]
         second = [r for r in here if r["obj_id"] == second_id]
@@ -408,6 +439,17 @@ def check():
     """Synthetic demo: blur, masks, head box, crowd, window, encode, audit."""
     import cv2
     import numpy as np
+
+    # gap cover: a person missing at t=0.2 between rows at 0.1 and 0.3 is still blurred, interpolated
+    track = [{"obj_id": "p", "cls": "person", "_t": t, "x1": "0", "y1": "0", "x2": str(10 * k), "y2": "10"}
+             for k, t in ((1, 0.1), (3, 0.3))]
+    got = cover({"p": track}, 0.2)
+    assert len(got) == 1 and abs(float(got[0]["x2"]) - 20.0) < 1e-6, got
+    assert cover({"p": track}, 0.45) and not cover({"p": track}, 0.8)          # held 0.2 s, then gone
+    edge = [dict(track[0], _t=1.2), dict(track[1], _t=2.2)]                   # exactly MAX_GAP_S apart
+    assert cover({"p": edge}, 1.7), "a one-second gap must stay covered"
+    far = [dict(track[0]), dict(track[1], _t=2.0)]
+    assert not cover({"p": far}, 1.0)                                         # gap over MAX_GAP_S: not invented
 
     rng = np.random.default_rng(11)
     frame = rng.integers(0, 256, (1080, 1920, 3), dtype=np.uint8)
