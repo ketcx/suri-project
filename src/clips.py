@@ -349,7 +349,7 @@ def cover(by_obj, t):
             continue
         after = next(r for r in obj_rows if r["_t"] > t)
         before = max((r for r in obj_rows if r["_t"] < t), key=lambda r: r["_t"])
-        if after["_t"] - before["_t"] > MAX_GAP_S:
+        if after["_t"] - before["_t"] > MAX_GAP_S + 1e-9:
             continue
         w = (t - before["_t"]) / (after["_t"] - before["_t"])
         box = {k: float(before[k]) + w * (float(after[k]) - float(before[k])) for k in ("x1", "y1", "x2", "y2")}
@@ -446,6 +446,8 @@ def check():
     got = cover({"p": track}, 0.2)
     assert len(got) == 1 and abs(float(got[0]["x2"]) - 20.0) < 1e-6, got
     assert cover({"p": track}, 0.45) and not cover({"p": track}, 0.8)          # held 0.2 s, then gone
+    edge = [dict(track[0], _t=1.2), dict(track[1], _t=2.2)]                   # exactly MAX_GAP_S apart
+    assert cover({"p": edge}, 1.7), "a one-second gap must stay covered"
     far = [dict(track[0]), dict(track[1], _t=2.0)]
     assert not cover({"p": far}, 1.0)                                         # gap over MAX_GAP_S: not invented
 

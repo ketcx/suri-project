@@ -50,6 +50,11 @@ def _null_block(keys):
             for key in keys}
 
 
+def exposure_hours(groups):
+    """Hours over sessions: union within each session (times restart at 0), sum, then round once."""
+    return round(sum(agent._union_seconds(g) for g in groups) / 3600.0, 3)
+
+
 def compute(crossing_dir, ledger_path):
     """metrics.json content from the crossing's recorded evidence."""
     sessions = sorted(name for name in os.listdir(crossing_dir)
@@ -63,14 +68,14 @@ def compute(crossing_dir, ledger_path):
     if os.path.exists(findings_path):
         with open(findings_path) as fh:
             covered = json.load(fh).get("sessions") or []
-        observed = [name for name in sessions if name in covered] or sessions
+        observed = [name for name in sessions if name in covered]      # empty scope stays empty
     events = [e for name in observed
               for e in _read_events(os.path.join(crossing_dir, name))]
     session_chunks = {name: _read_chunks(os.path.join(crossing_dir, name))
                       for name in sessions}
     chunks = [c for group in session_chunks.values() for c in group]
     # Chunk times are session-relative: union overlaps within a session, then sum sessions.
-    hours = round(sum(agent._union_hours(session_chunks[name]) for name in observed), 3)
+    hours = exposure_hours([session_chunks[name] for name in observed])
     footage_min = sum(agent._chunk_end(c) - float(c["t0_s"]) for c in chunks)
     footage_min = round(footage_min / 60.0, 3)
     verified = [e for e in events if e.get("status") == "verified"]
@@ -144,6 +149,14 @@ def run_check():
         with open(os.path.join(crossing, "findings.json"), "w") as fh:
             json.dump({"sessions": sessions}, fh)
         two = compute(crossing, "fixtures/metrics/ledger.csv")
+        half_min = [{"t0_s": "0", "duration_s": "30"}]
+        check("round after summing sessions", exposure_hours([half_min, half_min]) == 0.017)
+        with open(os.path.join(crossing, "findings.json"), "w") as fh:
+            json.dump({"sessions": []}, fh)
+        check("empty findings scope stays empty",
+              compute(crossing, "fixtures/metrics/ledger.csv")["hours_observed"] == 0)
+        with open(os.path.join(crossing, "findings.json"), "w") as fh:
+            json.dump({"sessions": sessions}, fh)
         check("rates use findings sessions",
               two["hours_observed"] == doc["hours_observed"]
               and two["h6"]["footage_min"] > doc["h6"]["footage_min"])

@@ -423,6 +423,7 @@ def run(run_dir, task_id):
     history = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": json.dumps(payload)}]}]
     model, fallback, calls, failures, ok_turns = AGENT_MODEL, None, 0, 0, 0
     run_started = datetime.datetime.now(datetime.timezone.utc)
+    claimed = set()                                # ledger row indices already attributed to a trace step
 
     for turn in range(1, MAX_TURNS + 1):
         body = {"model": model, "instructions": SYSTEM, "input": history, "tools": TOOLS, "tool_choice": "auto"}
@@ -493,9 +494,15 @@ def run(run_dir, task_id):
             cost, hit = 0.0, False
             if name == "explain" and isinstance(resp, tuple):
                 resp, tried = resp
-                # every ledger row of every attempt of this explain, in this run (failed attempts bill an estimate)
-                led = [r for r in ledger_tail() if r.get("request_hash") in tried
-                       and datetime.datetime.fromisoformat(r["ts"]) >= run_started]
+                tried = tried or []                        # clip missing or failed the audit: nothing was sent
+                # every ledger row of every attempt of this explain, in this run (failed attempts bill an estimate);
+                # a row already attributed to an earlier explain call is never counted twice
+                led = []
+                for k, r in enumerate(ledger_tail()):
+                    if k not in claimed and r.get("request_hash") in tried \
+                            and datetime.datetime.fromisoformat(r["ts"]) >= run_started:
+                        claimed.add(k)
+                        led.append(r)
                 cost = round(sum(float(r.get("cost_usd") or 0) for r in led), 6)
                 hit = bool(led) and all(r.get("cache_hit") == "1" for r in led)
             tokens = usage(resp) if resp else (None, None)

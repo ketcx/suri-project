@@ -844,6 +844,11 @@ def _chunk_end(chunk):
 
 def _union_hours(chunks):
     """Observed hours counting chunk overlaps once (spec 06 section 4.6)."""
+    return round(_union_seconds(chunks) / 3600.0, 3)
+
+
+def _union_seconds(chunks):
+    """Unrounded observed seconds, chunk overlaps counted once; sum these across sessions, round at the end."""
     spans = sorted((float(c["t0_s"]), _chunk_end(c)) for c in chunks)
     total, cur = 0.0, None
     for start, end in spans:
@@ -855,7 +860,7 @@ def _union_hours(chunks):
             cur[1] = end
     if cur is not None:
         total += cur[1] - cur[0]
-    return round(total / 3600.0, 3)
+    return total
 
 
 def load_session(run_dir):
